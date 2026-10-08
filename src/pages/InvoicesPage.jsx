@@ -1,9 +1,12 @@
 import React, {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
+
+import { createPortal } from 'react-dom';
 
 import {
   fetchInvoices,
@@ -19,10 +22,16 @@ import {
   Trash2,
   X,
   Receipt,
-  CheckCircle,
+  CheckCircle2,
+  AlertCircle,
   Building,
-  User,
   RefreshCw,
+  Search,
+  Wallet,
+  Clock,
+  TrendingUp,
+  FileText,
+  User,
 } from 'lucide-react';
 
 // ==================== HELPERS ====================
@@ -88,83 +97,203 @@ const validAmount = (value, allowZero = true) => {
   );
 };
 
+// ==================== STYLES ====================
+
 const inputClass =
-  'w-full px-4 py-2.5 rounded-xl border border-slate-300 ' +
-  'focus:outline-none focus:ring-2 focus:ring-blue-900 text-sm bg-white';
+  'w-full min-w-0 rounded-xl border border-slate-200 bg-white ' +
+  'px-3.5 py-3 text-base text-slate-900 placeholder:text-slate-400 ' +
+  'outline-none transition focus:border-indigo-400 focus:ring-4 ' +
+  'focus:ring-indigo-500/10 disabled:bg-slate-50 sm:text-sm';
 
 const buttonClass =
-  'inline-flex items-center justify-center gap-2 px-5 py-2.5 ' +
-  'rounded-xl bg-blue-900 hover:bg-blue-800 text-white font-medium ' +
-  'text-sm disabled:opacity-50 disabled:cursor-not-allowed';
+  'inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl ' +
+  'px-4 py-2.5 text-sm font-semibold transition-colors ' +
+  'focus-visible:outline-none focus-visible:ring-2 ' +
+  'focus-visible:ring-indigo-500 focus-visible:ring-offset-2 ' +
+  'disabled:cursor-not-allowed disabled:opacity-50';
 
-const cancelClass =
-  'px-5 py-2.5 rounded-xl border border-slate-300 text-slate-700 ' +
-  'hover:bg-slate-100 text-sm disabled:opacity-50';
+const primaryButton =
+  `${buttonClass} bg-indigo-600 text-white hover:bg-indigo-700`;
 
-const Field = ({ label, children }) => (
-  <label className="block">
-    <span className="block text-xs font-bold uppercase text-slate-600 mb-2">
-      {label}
+const secondaryButton =
+  `${buttonClass} border border-slate-200 bg-white text-slate-600 hover:bg-slate-50`;
+
+const successButton =
+  `${buttonClass} bg-emerald-600 text-white hover:bg-emerald-700`;
+
+// ==================== SMALL COMPONENTS ====================
+
+function Badge({ value }) {
+  const styles = {
+    Paid: 'border-emerald-100 bg-emerald-50 text-emerald-700',
+    Partial: 'border-amber-100 bg-amber-50 text-amber-700',
+    Unpaid: 'border-rose-100 bg-rose-50 text-rose-700',
+  };
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-semibold ${
+        styles[value] || styles.Unpaid
+      }`}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+      {value || 'Unknown'}
     </span>
-    {children}
-  </label>
-);
+  );
+}
 
-const Alert = ({ children, type = 'error' }) => (
-  <div
-    role={type === 'error' ? 'alert' : 'status'}
-    className={`p-4 rounded-xl border text-sm ${
-      type === 'success'
-        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-        : type === 'warning'
-          ? 'bg-amber-50 border-amber-200 text-amber-800'
-          : 'bg-red-50 border-red-200 text-red-700'
-    }`}
-  >
-    {children}
-  </div>
-);
+function Notice({ children, success = false, warning = false, onDismiss }) {
+  const Icon = success ? CheckCircle2 : AlertCircle;
 
-const Modal = ({ title, onClose, busy, children }) => {
-  useEffect(() => {
-    const handleKeyDown = (event) => {
-      if (event.key === 'Escape' && !busy) onClose();
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [onClose, busy]);
+  const styles = success
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+    : warning
+      ? 'border-amber-200 bg-amber-50 text-amber-800'
+      : 'border-rose-200 bg-rose-50 text-rose-800';
 
   return (
     <div
-      role="dialog"
-      aria-modal="true"
-      aria-label={title}
-      className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+      role={success ? 'status' : 'alert'}
+      className={`flex items-start gap-3 rounded-xl border p-4 text-sm ${styles}`}
     >
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-slate-900 text-white px-6 py-4 flex justify-between items-center gap-4">
-          <h3 className="font-bold">{title}</h3>
+      <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+      <p className="min-w-0 flex-1 leading-6">{children}</p>
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss message"
+          className="rounded-lg p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function Avatar({ name }) {
+  const initials =
+    name
+      ?.trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0])
+      .join('')
+      .toUpperCase() || 'I';
+
+  return (
+    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-sm font-bold text-indigo-600">
+      {initials}
+    </span>
+  );
+}
+
+function Modal({
+  title,
+  description,
+  icon: Icon = Receipt,
+  busy = false,
+  onClose,
+  children,
+  wide = false,
+}) {
+  const panelRef = useRef(null);
+  const closeRef = useRef(onClose);
+  const busyRef = useRef(busy);
+
+  useEffect(() => {
+    closeRef.current = onClose;
+    busyRef.current = busy;
+  }, [onClose, busy]);
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    const previousFocus = document.activeElement;
+    const previousOverflow = document.body.style.overflow;
+
+    document.body.style.overflow = 'hidden';
+    panel?.focus();
+
+    const keyDown = (event) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        if (!busyRef.current) closeRef.current();
+      }
+    };
+
+    document.addEventListener('keydown', keyDown);
+
+    return () => {
+      document.removeEventListener('keydown', keyDown);
+      document.body.style.overflow = previousOverflow;
+
+      if (
+        previousFocus instanceof HTMLElement &&
+        previousFocus.isConnected &&
+        previousFocus.getClientRects().length > 0 &&
+        !previousFocus.matches(':disabled')
+      ) {
+        previousFocus.focus();
+      }
+    };
+  }, []);
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/60 backdrop-blur-sm sm:items-center sm:p-6">
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        tabIndex={-1}
+        className={`flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl border border-white/20 bg-white shadow-2xl outline-none sm:rounded-2xl ${
+          wide ? 'sm:max-w-3xl' : 'sm:max-w-xl'
+        }`}
+      >
+        <div className="flex shrink-0 items-start gap-3 border-b border-slate-100 p-5 sm:p-6">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+            <Icon className="h-5 w-5" />
+          </span>
+
+          <div className="min-w-0 flex-1">
+            <h2 className="text-lg font-bold text-slate-900">{title}</h2>
+            {description && (
+              <p className="mt-1 text-xs leading-5 text-slate-500">
+                {description}
+              </p>
+            )}
+          </div>
 
           <button
             type="button"
-            onClick={onClose}
             disabled={busy}
+            onClick={onClose}
             aria-label="Close dialog"
-            className="disabled:opacity-40"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-40"
           >
-            <X className="w-6 h-6" />
+            <X className="h-5 w-5" />
           </button>
         </div>
 
         {children}
       </div>
+    </div>,
+    document.body
+  );
+}
+
+function ModalFooter({ children }) {
+  return (
+    <div
+      className="flex shrink-0 flex-wrap gap-3 border-t border-slate-100 bg-slate-50 px-5 py-4 sm:justify-end sm:px-6"
+      style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}
+    >
+      {children}
     </div>
   );
-};
+}
 
 // ==================== PAGE ====================
 
@@ -173,14 +302,16 @@ const InvoicesPage = () => {
   const [agreements, setAgreements] = useState([]);
 
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState('');
+
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [formData, setFormData] = useState(initialForm);
   const [createError, setCreateError] = useState('');
 
-  // Keep the original paid amount from when the payment form opened.
-  // Backend rejects submission if another payment changed it.
   const [paymentInvoice, setPaymentInvoice] = useState(null);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMode, setPaymentMode] = useState('Cash');
@@ -204,14 +335,13 @@ const InvoicesPage = () => {
       fetchAgreements(),
     ]);
 
-    if (!mounted.current || request !== requestId.current) {
-      return;
-    }
+    if (!mounted.current || request !== requestId.current) return;
 
     const errors = [];
 
     if (invoiceResult.status === 'fulfilled') {
       setInvoices(invoiceResult.value.data || []);
+      setLoaded(true);
     } else {
       errors.push(
         getErrorMessage(
@@ -232,9 +362,7 @@ const InvoicesPage = () => {
       );
     }
 
-    if (errors.length) {
-      setError(errors.join(' | '));
-    }
+    if (errors.length) setError(errors.join(' | '));
 
     setLoading(false);
   }, []);
@@ -334,7 +462,6 @@ const InvoicesPage = () => {
         !requestError.response ||
         requestError.response.status >= 500
       ) {
-        // The server may have saved the invoice before connection loss.
         setIsCreateOpen(false);
         await loadData();
 
@@ -419,7 +546,6 @@ const InvoicesPage = () => {
 
       const updatedInvoice = response.data;
 
-      // Update amounts immediately while preserving populated tenant/shop data.
       setInvoices((previous) =>
         previous.map((invoice) =>
           invoice._id === updatedInvoice._id
@@ -454,10 +580,7 @@ const InvoicesPage = () => {
     } catch (requestError) {
       if (!mounted.current) return;
 
-      // Close the old form. Do not silently update expectedPaidAmount
-      // and then resubmit the same amount.
       setPaymentInvoice(null);
-
       await loadData();
 
       if (!mounted.current) return;
@@ -548,301 +671,620 @@ const InvoicesPage = () => {
       )
     : 0;
 
+  // ============ STATE CARDS DATA ============
+  const counts = useMemo(() => {
+    let collected = 0;
+    let outstanding = 0;
+    let overdue = 0;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    invoices.forEach((invoice) => {
+      collected += number(invoice.paidAmount);
+      outstanding += number(invoice.balanceDue);
+
+      if (
+        invoice.status !== 'Paid' &&
+        invoice.dueDate &&
+        new Date(invoice.dueDate) < today
+      ) {
+        overdue += 1;
+      }
+    });
+
+    return {
+      total: invoices.length,
+      collected,
+      outstanding,
+      overdue,
+    };
+  }, [invoices]);
+
+  const statuses = ['Paid', 'Partial', 'Unpaid'];
+
+  const filteredInvoices = useMemo(() => {
+    const query = search.trim().toLowerCase();
+
+    return invoices.filter((invoice) => {
+      const matchesStatus =
+        !statusFilter || invoice.status === statusFilter;
+
+      const searchableText = [
+        invoice.invoiceNumber,
+        invoice.monthYear,
+        invoice.agreement?.tenant?.name,
+        invoice.agreement?.tenant?.phone,
+        invoice.agreement?.shops?.map((shop) => `#${shop.shopNumber}`).join(' '),
+      ]
+        .filter(Boolean)
+        .join(' ')
+        .toLowerCase();
+
+      return matchesStatus && (!query || searchableText.includes(query));
+    });
+  }, [invoices, search, statusFilter]);
+
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen space-y-6">
-      <header className="flex flex-wrap justify-between items-center gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900 flex items-center gap-3">
-            <Receipt className="w-8 h-8 text-blue-900" />
-            Financial Ledger & Monthly Billing
-          </h1>
+    <div className="min-w-0 bg-slate-50 p-4 sm:p-6 lg:p-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        {/* ============ HEADER ============ */}
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+          <div>
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-500">
+              Property Management
+            </p>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+              Financial ledger
+            </h1>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Monthly invoices, utilities and partial payments.
+            </p>
+          </div>
 
-          <p className="text-slate-500 text-sm mt-2">
-            Monthly invoices, utilities and partial payments.
-          </p>
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => {
-              setError('');
-              loadData();
-            }}
-            disabled={loading || Boolean(busy)}
-            className={cancelClass}
-          >
-            <span className="flex items-center gap-2">
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={loadData}
+              disabled={loading || Boolean(busy)}
+              className={secondaryButton}
+            >
               <RefreshCw
-                className={`w-4 h-4 ${
-                  loading ? 'animate-spin' : ''
-                }`}
+                className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`}
               />
-              Refresh
-            </span>
-          </button>
+              <span className="sr-only sm:not-sr-only">Refresh</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setCreateError('');
-              setIsCreateOpen(true);
-            }}
-            disabled={loading || Boolean(busy)}
-            className={buttonClass}
-          >
-            <Plus className="w-4 h-4" />
-            Generate Invoice
-          </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCreateError('');
+                setIsCreateOpen(true);
+              }}
+              disabled={loading || Boolean(busy)}
+              className={`${primaryButton} flex-1 sm:flex-none`}
+            >
+              <Plus className="h-4 w-4" />
+              Generate invoice
+            </button>
+          </div>
         </div>
-      </header>
 
-      {error && <Alert>{error}</Alert>}
-      {success && <Alert type="success">{success}</Alert>}
-      {warning && <Alert type="warning">{warning}</Alert>}
+        {error && (
+          <Notice onDismiss={() => setError('')}>{error}</Notice>
+        )}
+        {success && (
+          <Notice success onDismiss={() => setSuccess('')}>
+            {success}
+          </Notice>
+        )}
+        {warning && (
+          <Notice warning onDismiss={() => setWarning('')}>
+            {warning}
+          </Notice>
+        )}
 
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="bg-slate-900 text-white text-xs uppercase">
-                {[
-                  'Serial #',
-                  'Month / Shop',
-                  'Tenant',
-                  'Rent & Utilities',
-                  'Fine / Previous',
-                  'Total / Paid / Due',
-                  'Status & Mode',
-                  'Actions',
-                ].map((heading) => (
-                  <th key={heading} className="py-4 px-4 whitespace-nowrap">
-                    {heading}
-                  </th>
+        {/* ============ STATE CARDS ============ */}
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+          {[
+            [
+              'Total invoices',
+              counts.total,
+              FileText,
+              'bg-indigo-50 text-indigo-600',
+            ],
+            [
+              'Collected',
+              money(counts.collected),
+              Wallet,
+              'bg-emerald-50 text-emerald-600',
+            ],
+            [
+              'Outstanding',
+              money(counts.outstanding),
+              TrendingUp,
+              'bg-amber-50 text-amber-600',
+            ],
+            [
+              'Overdue',
+              counts.overdue,
+              Clock,
+              'bg-rose-50 text-rose-600',
+            ],
+          ].map(([label, value, Icon, color]) => (
+            <div
+              key={label}
+              className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-slate-500">
+                  {label}
+                </p>
+                <span className={`rounded-lg p-2 ${color}`}>
+                  <Icon className="h-4 w-4" />
+                </span>
+              </div>
+              <p className="mt-3 break-words text-2xl font-bold text-slate-900">
+                {loaded ? value : '—'}
+              </p>
+            </div>
+          ))}
+        </div>
+
+        {/* ============ LIST SECTION ============ */}
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 p-4 sm:p-5">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 className="text-sm font-bold text-slate-900">
+                All invoices
+              </h2>
+              <span
+                aria-live="polite"
+                className="text-xs text-slate-400"
+              >
+                {loading
+                  ? 'Refreshing…'
+                  : loaded
+                    ? `${filteredInvoices.length} matching`
+                    : 'Not loaded'}
+              </span>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3.5 top-3.5 h-4 w-4 text-slate-400" />
+                <input
+                  type="search"
+                  aria-label="Search invoices"
+                  placeholder="Search invoice #, tenant, shop or month..."
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  className={`${inputClass} pl-10`}
+                />
+              </div>
+
+              <select
+                aria-label="Filter invoice status"
+                value={statusFilter}
+                onChange={(event) =>
+                  setStatusFilter(event.target.value)
+                }
+                className={inputClass}
+              >
+                <option value="">All statuses</option>
+                {statuses.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
                 ))}
-              </tr>
-            </thead>
+              </select>
+            </div>
+          </div>
 
-            <tbody className="divide-y divide-slate-100 text-slate-700">
-              {!invoices.length ? (
-                <tr>
-                  <td colSpan={8} className="text-center py-10 text-slate-500">
-                    {loading ? 'Loading invoices...' : 'No invoices found.'}
-                  </td>
-                </tr>
-              ) : (
-                invoices.map((invoice) => {
+          {!loaded && loading ? (
+            <div role="status" className="space-y-3 p-5">
+              {[1, 2, 3].map((item) => (
+                <div
+                  key={item}
+                  className="h-20 animate-pulse rounded-xl bg-slate-100"
+                />
+              ))}
+              <span className="sr-only">Loading invoices...</span>
+            </div>
+          ) : !filteredInvoices.length ? (
+            <div className="px-6 py-16 text-center">
+              <Receipt className="mx-auto mb-4 h-10 w-10 text-indigo-300" />
+              <h3 className="font-bold text-slate-800">
+                {!loaded
+                  ? 'Could not load invoices'
+                  : 'No invoices found'}
+              </h3>
+              <p className="mt-2 text-sm text-slate-500">
+                {!loaded
+                  ? 'Refresh to try again.'
+                  : 'Generate your first monthly invoice to get started.'}
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Mobile cards */}
+              <div className="grid gap-4 bg-slate-50/60 p-4 sm:grid-cols-2 lg:hidden">
+                {filteredInvoices.map((invoice) => {
                   const remaining = roundMoney(
                     number(invoice.totalAmount) -
                       number(invoice.paidAmount)
                   );
 
-                  const statusClass =
-                    invoice.status === 'Paid'
-                      ? 'bg-emerald-100 text-emerald-800'
-                      : invoice.status === 'Partial'
-                        ? 'bg-amber-100 text-amber-800'
-                        : 'bg-rose-100 text-rose-800';
-
                   return (
-                    <tr key={invoice._id} className="hover:bg-slate-50">
-                      <td className="py-4 px-4 font-mono text-xs font-bold text-blue-900">
-                        {invoice.invoiceNumber}
-                      </td>
-
-                      <td className="py-4 px-4">
-                        <div className="font-semibold">
-                          {invoice.monthYear}
+                    <article
+                      key={invoice._id}
+                      className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <Avatar name={invoice.agreement?.tenant?.name} />
+                          <div className="min-w-0">
+                            <h3 className="break-words font-bold text-slate-900">
+                              {invoice.agreement?.tenant?.name ||
+                                'Unavailable'}
+                            </h3>
+                            <p className="mt-1 font-mono text-xs text-slate-500">
+                              {invoice.invoiceNumber}
+                            </p>
+                          </div>
                         </div>
+                        <Badge value={invoice.status} />
+                      </div>
 
-                        <div className="text-xs text-slate-500 flex items-center gap-1 mt-1">
-                          <Building className="w-3 h-3" />
-                          {invoice.agreement?.shops
-                            ?.map((shop) => `#${shop.shopNumber}`)
-                            .join(', ') || '—'}
+                      <div className="mt-5 space-y-3 text-sm">
+                        <div className="flex gap-2 text-slate-600">
+                          <Building className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                          <span>
+                            {invoice.agreement?.shops
+                              ?.map((shop) => `#${shop.shopNumber}`)
+                              .join(', ') || '—'}
+                          </span>
                         </div>
-                      </td>
-
-                      <td className="py-4 px-4">
-                        <div className="flex items-center gap-1">
-                          <User className="w-4 h-4 text-slate-400" />
-                          {invoice.agreement?.tenant?.name || 'Unavailable'}
+                        <div className="flex gap-2 text-slate-500">
+                          <FileText className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                          <span>{invoice.monthYear}</span>
                         </div>
-                      </td>
+                      </div>
 
-                      <td className="py-4 px-4 text-xs space-y-1">
-                        <div>Rent: {money(invoice.rentAmount)}</div>
-                        <div>Electricity: {money(invoice.electricityCharges)}</div>
-                        <div>Water: {money(invoice.waterCharges)}</div>
-                        <div>Maintenance: {money(invoice.maintenanceFee)}</div>
-                      </td>
-
-                      <td className="py-4 px-4 text-xs space-y-1">
-                        <div>Fine: {money(invoice.lateFine)}</div>
-                        <div>Previous: {money(invoice.previousBalance)}</div>
-                      </td>
-
-                      <td className="py-4 px-4 text-xs space-y-1">
-                        <div className="font-bold text-slate-900">
-                          Total: {money(invoice.totalAmount)}
+                      <dl className="mt-4 space-y-2 border-t border-slate-100 pt-4 text-xs">
+                        <div className="flex justify-between gap-3">
+                          <dt className="text-slate-500">Total</dt>
+                          <dd className="font-bold text-slate-900">
+                            {money(invoice.totalAmount)}
+                          </dd>
                         </div>
-                        <div className="font-bold text-emerald-700">
-                          Paid: {money(invoice.paidAmount)}
+                        <div className="flex justify-between gap-3">
+                          <dt className="text-slate-500">Paid</dt>
+                          <dd className="font-bold text-emerald-700">
+                            {money(invoice.paidAmount)}
+                          </dd>
                         </div>
-                        <div className="font-bold text-rose-700">
-                          Due: {money(invoice.balanceDue)}
+                        <div className="flex justify-between gap-3">
+                          <dt className="text-slate-500">Due</dt>
+                          <dd className="font-bold text-rose-700">
+                            {money(invoice.balanceDue)}
+                          </dd>
                         </div>
-                      </td>
+                      </dl>
 
-                      <td className="py-4 px-4">
-                        <span
-                          className={`inline-block px-3 py-1 rounded-full text-xs font-semibold ${statusClass}`}
-                        >
-                          {invoice.status}
-                        </span>
-
-                        <div className="text-xs text-slate-500 mt-2">
-                          {invoice.paymentMode || 'None'}
-                        </div>
-                      </td>
-
-                      <td className="py-4 px-4">
-                        <div className="flex items-center gap-2">
-                          {remaining > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => openPayment(invoice)}
-                              disabled={Boolean(busy) || loading}
-                              className="inline-flex items-center gap-1 bg-emerald-50 text-emerald-700 px-3 py-2 rounded-lg text-xs font-semibold disabled:opacity-50"
-                            >
-                              <CheckCircle className="w-4 h-4" />
-                              Pay
-                            </button>
-                          )}
-
+                      <div className="mt-4 flex gap-2 border-t border-slate-100 pt-4">
+                        {remaining > 0 && (
                           <button
                             type="button"
-                            onClick={() => handleDelete(invoice)}
+                            onClick={() => openPayment(invoice)}
                             disabled={Boolean(busy) || loading}
-                            aria-label={`Delete ${invoice.invoiceNumber}`}
-                            className="bg-rose-50 text-rose-600 p-2 rounded-lg disabled:opacity-50"
+                            className={`${successButton} flex-1 px-3`}
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <CheckCircle2 className="h-4 w-4" />
+                            Pay
                           </button>
-                        </div>
-                      </td>
-                    </tr>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => handleDelete(invoice)}
+                          disabled={Boolean(busy) || loading}
+                          aria-label={`Delete ${invoice.invoiceNumber}`}
+                          className={`${buttonClass} bg-rose-50 px-3 text-rose-600 hover:bg-rose-100`}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </article>
                   );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                })}
+              </div>
+
+              {/* Desktop table */}
+              <div className="hidden overflow-x-auto lg:block">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500">
+                    <tr>
+                      {[
+                        'Invoice',
+                        'Month / Shop',
+                        'Tenant',
+                        'Charges',
+                        'Total / Paid / Due',
+                        'Status',
+                        'Actions',
+                      ].map((label) => (
+                        <th
+                          key={label}
+                          scope="col"
+                          className="px-5 py-4"
+                        >
+                          {label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredInvoices.map((invoice) => {
+                      const remaining = roundMoney(
+                        number(invoice.totalAmount) -
+                          number(invoice.paidAmount)
+                      );
+
+                      return (
+                        <tr
+                          key={invoice._id}
+                          className="hover:bg-indigo-50/30"
+                        >
+                          <td className="px-5 py-4">
+                            <div className="flex items-center gap-3">
+                              <Avatar name={invoice.agreement?.tenant?.name} />
+                              <div className="min-w-[120px]">
+                                <p className="font-mono text-xs font-bold text-indigo-600">
+                                  {invoice.invoiceNumber}
+                                </p>
+                                <p className="mt-1 text-xs text-slate-400">
+                                  {invoice.monthYear}
+                                </p>
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="px-5 py-4 text-xs">
+                            <div className="flex items-center gap-1 text-slate-600">
+                              <Building className="h-3 w-3 text-slate-400" />
+                              {invoice.agreement?.shops
+                                ?.map((shop) => `#${shop.shopNumber}`)
+                                .join(', ') || '—'}
+                            </div>
+                          </td>
+
+                          <td className="px-5 py-4">
+                            <div className="flex items-center gap-2 text-slate-700">
+                              <User className="h-4 w-4 text-slate-400" />
+                              <span className="max-w-[160px] break-words font-semibold">
+                                {invoice.agreement?.tenant?.name ||
+                                  'Unavailable'}
+                              </span>
+                            </div>
+                          </td>
+
+                          <td className="px-5 py-4 text-xs">
+                            <div className="space-y-1">
+                              <div>Rent: {money(invoice.rentAmount)}</div>
+                              <div>
+                                Electricity: {money(invoice.electricityCharges)}
+                              </div>
+                              <div>Water: {money(invoice.waterCharges)}</div>
+                              <div>
+                                Maintenance: {money(invoice.maintenanceFee)}
+                              </div>
+                              {(number(invoice.lateFine) > 0 ||
+                                number(invoice.previousBalance) > 0) && (
+                                <div className="border-t border-slate-100 pt-1">
+                                  Fine: {money(invoice.lateFine)} · Prev:{' '}
+                                  {money(invoice.previousBalance)}
+                                </div>
+                              )}
+                            </div>
+                          </td>
+
+                          <td className="px-5 py-4 text-xs">
+                            <div className="space-y-1">
+                              <div className="font-bold text-slate-900">
+                                Total: {money(invoice.totalAmount)}
+                              </div>
+                              <div className="font-bold text-emerald-700">
+                                Paid: {money(invoice.paidAmount)}
+                              </div>
+                              <div className="font-bold text-rose-700">
+                                Due: {money(invoice.balanceDue)}
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="px-5 py-4">
+                            <Badge value={invoice.status} />
+                            {invoice.paymentMode && (
+                              <p className="mt-2 text-xs text-slate-500">
+                                {invoice.paymentMode}
+                              </p>
+                            )}
+                          </td>
+
+                          <td className="px-5 py-4">
+                            <div className="flex items-center gap-2">
+                              {remaining > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={() => openPayment(invoice)}
+                                  disabled={Boolean(busy) || loading}
+                                  className={`${successButton} px-3`}
+                                >
+                                  <CheckCircle2 className="h-4 w-4" />
+                                  Pay
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() => handleDelete(invoice)}
+                                disabled={Boolean(busy) || loading}
+                                aria-label={`Delete ${invoice.invoiceNumber}`}
+                                className={`${buttonClass} bg-rose-50 px-3 text-rose-600 hover:bg-rose-100`}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </section>
       </div>
 
       {/* ==================== CREATE MODAL ==================== */}
 
       {isCreateOpen && (
         <Modal
-          title="Generate Monthly Invoice"
+          title="Generate monthly invoice"
+          description="Select agreement, month and applicable charges."
+          icon={Receipt}
           onClose={closeCreate}
           busy={Boolean(busy)}
         >
-          <form onSubmit={handleCreate} className="p-6 space-y-5">
-            {createError && <Alert>{createError}</Alert>}
+          <form
+            onSubmit={handleCreate}
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            <div className="min-h-0 overflow-y-auto overscroll-contain p-5 sm:p-6 space-y-5">
+              {createError && <Notice>{createError}</Notice>}
 
-            <fieldset disabled={Boolean(busy)} className="space-y-5">
-              <Field label="Agreement / Tenant">
-                <select
-                  name="agreementId"
-                  value={formData.agreementId}
-                  onChange={handleChange}
-                  required
-                  className={inputClass}
-                >
-                  <option value="">Choose agreement...</option>
-
-                  {agreements.map((agreement) => (
-                    <option key={agreement._id} value={agreement._id}>
-                      {agreement.shops
-                        ?.map((shop) => `#${shop.shopNumber}`)
-                        .join(', ')}
-                      {' — '}
-                      {agreement.tenant?.name || 'Unavailable'}
-                      {' — '}
-                      {money(agreement.monthlyRent)}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Field label="Invoice Month">
-                  <input
-                    type="month"
-                    name="monthYear"
-                    value={formData.monthYear}
+              <fieldset disabled={Boolean(busy)} className="space-y-5">
+                <label className="block">
+                  <span className="mb-2 block text-xs font-semibold text-slate-600">
+                    Agreement / tenant
+                  </span>
+                  <select
+                    name="agreementId"
+                    value={formData.agreementId}
                     onChange={handleChange}
                     required
                     className={inputClass}
-                  />
-                </Field>
+                  >
+                    <option value="">Choose agreement...</option>
+                    {agreements.map((agreement) => (
+                      <option key={agreement._id} value={agreement._id}>
+                        {agreement.shops
+                          ?.map((shop) => `#${shop.shopNumber}`)
+                          .join(', ')}
+                        {' — '}
+                        {agreement.tenant?.name || 'Unavailable'}
+                        {' — '}
+                        {money(agreement.monthlyRent)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
 
-                <Field label="Due Date">
-                  <input
-                    type="date"
-                    name="dueDate"
-                    value={formData.dueDate}
-                    onChange={handleChange}
-                    required
-                    className={inputClass}
-                  />
-                </Field>
-              </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {amountFields.map(([name, label]) => (
-                  <Field key={name} label={label}>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-semibold text-slate-600">
+                      Invoice month
+                    </span>
                     <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      name={name}
-                      value={formData[name]}
+                      type="month"
+                      name="monthYear"
+                      value={formData.monthYear}
                       onChange={handleChange}
-                      placeholder="0.00"
+                      required
                       className={inputClass}
                     />
-                  </Field>
-                ))}
-              </div>
+                  </label>
 
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2 text-sm">
-                <div className="flex justify-between gap-4">
-                  <span>Monthly Rent</span>
-                  <strong>{money(selectedAgreement?.monthlyRent)}</strong>
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-semibold text-slate-600">
+                      Due date
+                    </span>
+                    <input
+                      type="date"
+                      name="dueDate"
+                      value={formData.dueDate}
+                      onChange={handleChange}
+                      required
+                      className={inputClass}
+                    />
+                  </label>
                 </div>
 
-                <div className="flex justify-between gap-4">
-                  <span>Invoice Total</span>
-                  <strong>{money(invoicePreview)}</strong>
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {amountFields.map(([name, label]) => (
+                    <label key={name} className="block">
+                      <span className="mb-2 block text-xs font-semibold text-slate-600">
+                        {label}
+                      </span>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        name={name}
+                        value={formData[name]}
+                        onChange={handleChange}
+                        placeholder="0.00"
+                        className={inputClass}
+                      />
+                    </label>
+                  ))}
                 </div>
-              </div>
 
-              <div className="flex justify-end gap-3">
-                <button
-                  type="button"
-                  onClick={closeCreate}
-                  className={cancelClass}
-                >
-                  Cancel
-                </button>
+                <div className="rounded-xl border border-indigo-100 bg-indigo-50 p-4 text-sm">
+                  <div className="flex justify-between gap-4">
+                    <span className="text-slate-600">Monthly rent</span>
+                    <strong className="text-slate-900">
+                      {money(selectedAgreement?.monthlyRent)}
+                    </strong>
+                  </div>
+                  <div className="mt-2 flex justify-between gap-4 border-t border-indigo-100 pt-2">
+                    <span className="font-semibold text-indigo-700">
+                      Invoice total
+                    </span>
+                    <strong className="text-indigo-700">
+                      {money(invoicePreview)}
+                    </strong>
+                  </div>
+                </div>
+              </fieldset>
+            </div>
 
-                <button type="submit" className={buttonClass}>
-                  {busy === 'create' ? 'Creating...' : 'Generate Invoice'}
-                </button>
-              </div>
-            </fieldset>
+            <ModalFooter>
+              <button
+                type="button"
+                onClick={closeCreate}
+                disabled={Boolean(busy)}
+                className={`${secondaryButton} flex-1 sm:flex-none`}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                disabled={Boolean(busy)}
+                className={`${primaryButton} flex-1 sm:flex-none`}
+              >
+                {busy === 'create' ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Plus className="h-4 w-4" />
+                )}
+                {busy === 'create' ? 'Creating…' : 'Generate invoice'}
+              </button>
+            </ModalFooter>
           </form>
         </Modal>
       )}
@@ -851,89 +1293,120 @@ const InvoicesPage = () => {
 
       {paymentInvoice && (
         <Modal
-          title={`Record Payment — ${paymentInvoice.invoiceNumber}`}
+          title={`Record payment — ${paymentInvoice.invoiceNumber}`}
+          description="Enter the new payment. Previous payments are added automatically."
+          icon={CheckCircle2}
           onClose={closePayment}
           busy={Boolean(busy)}
         >
-          <form onSubmit={handlePayment} className="p-6 space-y-5">
-            {paymentError && <Alert>{paymentError}</Alert>}
+          <form
+            onSubmit={handlePayment}
+            className="flex min-h-0 flex-1 flex-col"
+          >
+            <div className="min-h-0 overflow-y-auto overscroll-contain p-5 sm:p-6 space-y-5">
+              {paymentError && <Notice>{paymentError}</Notice>}
 
-            <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-sm space-y-3">
-              <div className="flex justify-between gap-4">
-                <span>Invoice Month</span>
-                <strong>{paymentInvoice.monthYear}</strong>
+              <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm space-y-3">
+                <div className="flex justify-between gap-4">
+                  <span className="text-slate-500">Invoice month</span>
+                  <strong className="text-slate-900">
+                    {paymentInvoice.monthYear}
+                  </strong>
+                </div>
+
+                <div className="flex justify-between gap-4">
+                  <span className="text-slate-500">Total amount</span>
+                  <strong className="text-slate-900">
+                    {money(paymentInvoice.totalAmount)}
+                  </strong>
+                </div>
+
+                <div className="flex justify-between gap-4 text-emerald-700">
+                  <span>Already paid</span>
+                  <strong>{money(paymentInvoice.paidAmount)}</strong>
+                </div>
+
+                <div className="flex justify-between gap-4 border-t border-slate-200 pt-3 text-rose-700">
+                  <span className="font-semibold">Remaining balance</span>
+                  <strong>{money(paymentRemaining)}</strong>
+                </div>
               </div>
 
-              <div className="flex justify-between gap-4">
-                <span>Total Amount</span>
-                <strong>{money(paymentInvoice.totalAmount)}</strong>
-              </div>
+              <fieldset disabled={Boolean(busy)} className="space-y-5">
+                <label className="block">
+                  <span className="mb-2 block text-xs font-semibold text-slate-600">
+                    Amount received this time
+                  </span>
+                  <input
+                    type="number"
+                    min="0.01"
+                    max={paymentRemaining}
+                    step="0.01"
+                    value={paymentAmount}
+                    onChange={(event) =>
+                      setPaymentAmount(event.target.value)
+                    }
+                    placeholder="Enter this payment only"
+                    required
+                    autoFocus
+                    className={inputClass}
+                  />
+                </label>
 
-              <div className="flex justify-between gap-4 text-emerald-700">
-                <span>Already Paid</span>
-                <strong>{money(paymentInvoice.paidAmount)}</strong>
-              </div>
-
-              <div className="flex justify-between gap-4 text-rose-700">
-                <span>Remaining Balance</span>
-                <strong>{money(paymentRemaining)}</strong>
-              </div>
-            </div>
-
-            <fieldset disabled={Boolean(busy)} className="space-y-5">
-              <Field label="Amount Received This Time">
-                <input
-                  type="number"
-                  min="0.01"
-                  max={paymentRemaining}
-                  step="0.01"
-                  value={paymentAmount}
-                  onChange={(event) => setPaymentAmount(event.target.value)}
-                  placeholder="Enter this payment only"
-                  required
-                  autoFocus
-                  className={inputClass}
-                />
-              </Field>
-
-              <p className="text-xs text-slate-500">
-                Enter only the new payment. Previously paid money is added automatically.
-              </p>
-
-              <button
-                type="button"
-                onClick={() => setPaymentAmount(String(paymentRemaining))}
-                className="text-sm font-semibold text-blue-800"
-              >
-                Use full remaining balance: {money(paymentRemaining)}
-              </button>
-
-              <Field label="Payment Mode">
-                <select
-                  value={paymentMode}
-                  onChange={(event) => setPaymentMode(event.target.value)}
-                  className={inputClass}
-                >
-                  <option value="Cash">Cash</option>
-                  <option value="Bank Transfer">Bank Transfer</option>
-                  <option value="Cheque">Cheque</option>
-                </select>
-              </Field>
-
-              <div className="flex justify-end gap-3">
                 <button
                   type="button"
-                  onClick={closePayment}
-                  className={cancelClass}
+                  onClick={() =>
+                    setPaymentAmount(String(paymentRemaining))
+                  }
+                  className="text-sm font-semibold text-indigo-600 hover:text-indigo-700"
                 >
-                  Cancel
+                  Use full remaining: {money(paymentRemaining)}
                 </button>
 
-                <button type="submit" className={buttonClass}>
-                  {busy === 'payment' ? 'Saving Payment...' : 'Record Payment'}
-                </button>
-              </div>
-            </fieldset>
+                <label className="block">
+                  <span className="mb-2 block text-xs font-semibold text-slate-600">
+                    Payment mode
+                  </span>
+                  <select
+                    value={paymentMode}
+                    onChange={(event) =>
+                      setPaymentMode(event.target.value)
+                    }
+                    className={inputClass}
+                  >
+                    <option value="Cash">Cash</option>
+                    <option value="Bank Transfer">Bank Transfer</option>
+                    <option value="Cheque">Cheque</option>
+                  </select>
+                </label>
+              </fieldset>
+            </div>
+
+            <ModalFooter>
+              <button
+                type="button"
+                onClick={closePayment}
+                disabled={Boolean(busy)}
+                className={`${secondaryButton} flex-1 sm:flex-none`}
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                disabled={Boolean(busy)}
+                className={`${successButton} flex-1 sm:flex-none`}
+              >
+                {busy === 'payment' ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="h-4 w-4" />
+                )}
+                {busy === 'payment'
+                  ? 'Saving…'
+                  : 'Record payment'}
+              </button>
+            </ModalFooter>
           </form>
         </Modal>
       )}

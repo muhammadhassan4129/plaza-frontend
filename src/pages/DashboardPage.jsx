@@ -392,7 +392,7 @@ export default function DashboardPage() {
             <div>
               <div className="mb-3 flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-indigo-300">
                 <LayoutDashboard className="h-4 w-4" />
-                Plaza Management
+                Khalil Plaza
               </div>
 
               <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">

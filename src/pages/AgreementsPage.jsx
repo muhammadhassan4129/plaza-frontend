@@ -22,6 +22,12 @@ import {
   Printer,
   RefreshCw,
   Search,
+  CheckCircle2,
+  AlertCircle,
+  Users,
+  Store,
+  Wallet,
+  FileCheck2,
 } from 'lucide-react';
 
 // ==================== HELPERS ====================
@@ -111,51 +117,89 @@ const shopLabel = (agreement) =>
 const getErrorMessage = (error, fallback) =>
   error.response?.data?.message || error.message || fallback;
 
+const initials = (name = '') =>
+  name.trim().split(/\s+/).filter(Boolean)
+    .slice(0, 2).map((part) => part[0]).join('').toUpperCase() || 'A';
+
+// ==================== STYLES ====================
+
 const inputClass =
-  'w-full px-4 py-2.5 rounded-xl border border-slate-300 ' +
-  'bg-white text-sm focus:outline-none focus:ring-2 ' +
-  'focus:ring-blue-900 disabled:bg-slate-100 disabled:text-slate-500';
+  'w-full min-w-0 rounded-xl border border-slate-200 bg-white ' +
+  'px-3.5 py-3 text-base text-slate-900 placeholder:text-slate-400 ' +
+  'outline-none transition focus:border-indigo-400 focus:ring-4 ' +
+  'focus:ring-indigo-500/10 disabled:bg-slate-50 sm:text-sm';
 
 const buttonClass =
-  'inline-flex items-center justify-center gap-2 px-5 py-2.5 ' +
-  'rounded-xl bg-blue-900 hover:bg-blue-800 text-white text-sm ' +
-  'font-medium disabled:opacity-50 disabled:cursor-not-allowed';
+  'inline-flex min-h-[44px] items-center justify-center gap-2 rounded-xl ' +
+  'px-4 py-2.5 text-sm font-semibold transition-colors ' +
+  'focus-visible:outline-none focus-visible:ring-2 ' +
+  'focus-visible:ring-indigo-500 focus-visible:ring-offset-2 ' +
+  'disabled:cursor-not-allowed disabled:opacity-50';
 
-const secondaryClass =
-  'inline-flex items-center justify-center gap-2 px-4 py-2.5 ' +
-  'rounded-xl border border-slate-300 text-slate-700 text-sm ' +
-  'hover:bg-slate-100 disabled:opacity-50';
+const primaryButton =
+  `${buttonClass} bg-indigo-600 text-white hover:bg-indigo-700`;
 
-const Field = ({ label, children }) => (
-  <label className="block">
-    <span className="block text-xs font-bold uppercase text-slate-600 mb-2">
-      {label}
+const secondaryButton =
+  `${buttonClass} border border-slate-200 bg-white text-slate-600 hover:bg-slate-50`;
+
+// ==================== SMALL COMPONENTS ====================
+
+function Badge({ value }) {
+  const styles = {
+    Active: 'border-emerald-100 bg-emerald-50 text-emerald-700',
+    Expired: 'border-rose-100 bg-rose-50 text-rose-700',
+    Terminated: 'border-rose-100 bg-rose-50 text-rose-700',
+    Pending: 'border-amber-100 bg-amber-50 text-amber-700',
+    Inactive: 'border-slate-200 bg-slate-50 text-slate-600',
+  };
+
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-2.5 py-1 text-xs font-semibold ${
+        styles[value] || styles.Inactive
+      }`}
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-current" />
+      {value || 'Unknown'}
     </span>
-    {children}
-  </label>
-);
+  );
+}
 
-const Alert = ({ children, success = false }) => (
-  <div
-    role={success ? 'status' : 'alert'}
-    className={`p-4 rounded-xl border text-sm ${
-      success
-        ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-        : 'bg-red-50 border-red-200 text-red-700'
-    }`}
-  >
-    {children}
-  </div>
-);
+function Notice({ children, success = false, onDismiss }) {
+  const Icon = success ? CheckCircle2 : AlertCircle;
 
-const tenantFields = [
-  ['tenantName', 'Tenant Full Name', true, 'text'],
-  ['tenantCnic', 'CNIC Number', true, 'text'],
-  ['tenantPhone', 'Phone Number', true, 'tel'],
-  ['tenantWhatsApp', 'WhatsApp', false, 'tel'],
-  ['tenantAddress', 'Permanent Address', false, 'text'],
-  ['emergencyContact', 'Emergency Contact', false, 'tel'],
-];
+  return (
+    <div
+      role={success ? 'status' : 'alert'}
+      className={`flex items-start gap-3 rounded-xl border p-4 text-sm ${
+        success
+          ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+          : 'border-rose-200 bg-rose-50 text-rose-800'
+      }`}
+    >
+      <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+      <p className="min-w-0 flex-1 leading-6">{children}</p>
+      {onDismiss && (
+        <button
+          type="button"
+          onClick={onDismiss}
+          aria-label="Dismiss message"
+          className="rounded-lg p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-current"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function Avatar({ name }) {
+  return (
+    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-sm font-bold text-indigo-600">
+      {initials(name)}
+    </span>
+  );
+}
 
 // ==================== PAGE ====================
 
@@ -165,6 +209,7 @@ const AgreementsPage = () => {
   const [tenants, setTenants] = useState([]);
 
   const [loading, setLoading] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [formReady, setFormReady] = useState(false);
   const [saving, setSaving] = useState(false);
 
@@ -203,6 +248,7 @@ const AgreementsPage = () => {
 
       if (Array.isArray(rows)) {
         setAgreements(rows);
+        setLoaded(true);
 
         setSelectedAgreement((previous) =>
           previous
@@ -282,7 +328,6 @@ const AgreementsPage = () => {
     setSuccessMsg('');
     setIsModalOpen(true);
 
-    // Refresh shop availability before a new agreement is submitted.
     loadData();
   };
 
@@ -417,9 +462,9 @@ const AgreementsPage = () => {
       incrementPercentage: roundMoney(formData.incrementPercentage),
     };
 
-    for (const [field] of tenantFields) {
+    tenantFields.forEach(([field]) => {
       payload[field] = String(payload[field] ?? '').trim();
-    }
+    });
 
     saveLock.current = true;
     ++requestId.current;
@@ -453,7 +498,6 @@ const AgreementsPage = () => {
         !requestError.response ||
         requestError.response.status >= 500
       ) {
-        // A lost response does not prove that creation failed.
         setIsModalOpen(false);
         await loadData();
 
@@ -497,355 +541,660 @@ const AgreementsPage = () => {
     });
   }, [agreements, search, statusFilter]);
 
+  // ============ STATE CARDS DATA ============
+  const counts = useMemo(() => {
+    const active = agreements.filter(
+      (item) => item.status === 'Active'
+    ).length;
+
+    const shopsRented = agreements.reduce(
+      (sum, item) => sum + getShops(item).length,
+      0
+    );
+
+    const monthlyRevenue = agreements
+      .filter((item) => item.status === 'Active')
+      .reduce(
+        (sum, item) =>
+          sum + number(item.monthlyRent ?? item.rentAmount),
+        0
+      );
+
+    return {
+      total: agreements.length,
+      active,
+      shopsRented,
+      monthlyRevenue,
+    };
+  }, [agreements]);
+
+  const tenantFields = [
+    ['tenantName', 'Tenant Full Name', true, 'text'],
+    ['tenantCnic', 'CNIC Number', true, 'text'],
+    ['tenantPhone', 'Phone Number', true, 'tel'],
+    ['tenantWhatsApp', 'WhatsApp', false, 'tel'],
+    ['tenantAddress', 'Permanent Address', false, 'text'],
+    ['emergencyContact', 'Emergency Contact', false, 'tel'],
+  ];
+
   return (
-    <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen space-y-6">
-      <header className="flex flex-wrap justify-between items-center gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900 flex items-center gap-3">
-            <FileText className="w-8 h-8 text-blue-900" />
-            Lease Agreements & Tenant Onboarding
-          </h1>
+    <div className="min-w-0 bg-slate-50 p-4 sm:p-6 lg:p-8">
+      <div className="mx-auto max-w-7xl space-y-6">
+        {/* ============ HEADER ============ */}
+        <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+          <div>
+            <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.18em] text-indigo-500">
+              Property Management
+            </p>
+            <h1 className="text-2xl font-bold tracking-tight text-slate-900 sm:text-3xl">
+              Lease agreements
+            </h1>
+            <p className="mt-2 text-sm leading-6 text-slate-500">
+              Manage tenants, commercial units and lease details.
+            </p>
+          </div>
 
-          <p className="text-slate-500 text-sm mt-2">
-            Manage tenants, commercial units and lease details.
-          </p>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={loading || saving}
+              onClick={loadData}
+              className={secondaryButton}
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`}
+              />
+              <span className="sr-only sm:not-sr-only">Refresh</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={saving}
+              onClick={openCreate}
+              className={`${primaryButton} flex-1 sm:flex-none`}
+            >
+              <Plus className="h-4 w-4" />
+              New agreement
+            </button>
+          </div>
         </div>
 
-        <div className="flex gap-2">
-          <button
-            onClick={loadData}
-            disabled={loading || saving}
-            className={secondaryClass}
-          >
-            <RefreshCw
-              className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`}
-            />
-            Refresh
-          </button>
+        {error && (
+          <Notice onDismiss={() => setError('')}>{error}</Notice>
+        )}
+        {successMsg && (
+          <Notice success onDismiss={() => setSuccessMsg('')}>
+            {successMsg}
+          </Notice>
+        )}
 
-          <button
-            onClick={openCreate}
-            disabled={saving}
-            className={buttonClass}
-          >
-            <Plus className="w-4 h-4" />
-            New Agreement
-          </button>
-        </div>
-      </header>
-
-      {error && <Alert>{error}</Alert>}
-      {successMsg && <Alert success>{successMsg}</Alert>}
-
-      <div className="bg-white rounded-2xl border border-slate-200 p-5 flex flex-wrap gap-4 items-center">
-        <div className="relative flex-1 min-w-[220px]">
-          <Search className="absolute left-3 top-3 w-5 h-5 text-slate-400" />
-
-          <input
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Search tenant, CNIC, phone or shop..."
-            aria-label="Search agreements"
-            className={`${inputClass} pl-10`}
-          />
-        </div>
-
-        <select
-          value={statusFilter}
-          onChange={(event) => setStatusFilter(event.target.value)}
-          aria-label="Filter agreement status"
-          className={`${inputClass} sm:max-w-[200px]`}
-        >
-          <option value="">All Statuses</option>
-
-          {statuses.map((status) => (
-            <option key={status} value={status}>{status}</option>
+        {/* ============ STATE CARDS ============ */}
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
+          {[
+            [
+              'Total agreements',
+              counts.total,
+              FileText,
+              'bg-indigo-50 text-indigo-600',
+            ],
+            [
+              'Active leases',
+              counts.active,
+              FileCheck2,
+              'bg-emerald-50 text-emerald-600',
+            ],
+            [
+              'Shops rented',
+              counts.shopsRented,
+              Store,
+              'bg-amber-50 text-amber-600',
+            ],
+            [
+              'Monthly revenue',
+              money(counts.monthlyRevenue),
+              Wallet,
+              'bg-violet-50 text-violet-600',
+            ],
+          ].map(([label, value, Icon, color]) => (
+            <div
+              key={label}
+              className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs font-medium text-slate-500">
+                  {label}
+                </p>
+                <span className={`rounded-lg p-2 ${color}`}>
+                  <Icon className="h-4 w-4" />
+                </span>
+              </div>
+              <p className="mt-3 break-words text-2xl font-bold text-slate-900">
+                {loaded ? value : '—'}
+              </p>
+            </div>
           ))}
-        </select>
+        </div>
 
-        <span className="text-sm text-slate-500">
-          {filteredAgreements.length} agreement(s)
-        </span>
-      </div>
+        {/* ============ LIST SECTION ============ */}
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="border-b border-slate-100 p-4 sm:p-5">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <h2 className="text-sm font-bold text-slate-900">
+                All agreements
+              </h2>
+              <span
+                aria-live="polite"
+                className="text-xs text-slate-400"
+              >
+                {loading
+                  ? 'Refreshing…'
+                  : loaded
+                    ? `${filteredAgreements.length} matching`
+                    : 'Not loaded'}
+              </span>
+            </div>
 
-      <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm">
-            <thead className="bg-slate-900 text-white text-xs uppercase">
-              <tr>
-                {[
-                  'Shops',
-                  'Tenant',
-                  'Phone / CNIC',
-                  'Lease Period',
-                  'Monthly Rent',
-                  'Status',
-                  'Action',
-                ].map((heading) => (
-                  <th key={heading} className="px-4 py-4 whitespace-nowrap">
-                    {heading}
-                  </th>
+            <div className="grid gap-3 sm:grid-cols-[1fr_180px]">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3.5 top-3.5 h-4 w-4 text-slate-400" />
+                <input
+                  type="search"
+                  aria-label="Search agreements"
+                  placeholder="Search tenant, CNIC, phone or shop..."
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  className={`${inputClass} pl-10`}
+                />
+              </div>
+
+              <select
+                aria-label="Filter agreement status"
+                value={statusFilter}
+                onChange={(event) =>
+                  setStatusFilter(event.target.value)
+                }
+                className={inputClass}
+              >
+                <option value="">All statuses</option>
+                {statuses.map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
                 ))}
-              </tr>
-            </thead>
+              </select>
+            </div>
+          </div>
 
-            <tbody className="divide-y divide-slate-100">
-              {!filteredAgreements.length ? (
-                <tr>
-                  <td colSpan={7} className="text-center py-10 text-slate-500">
-                    {loading ? 'Loading agreements...' : 'No agreements found.'}
-                  </td>
-                </tr>
-              ) : (
-                filteredAgreements.map((agreement) => (
-                  <tr key={agreement._id} className="hover:bg-slate-50">
-                    <td className="px-4 py-4 font-semibold">
-                      <span className="inline-flex items-center gap-2">
-                        <Building className="w-4 h-4 text-blue-900" />
-                        {shopLabel(agreement)}
-                      </span>
-                    </td>
+          {!loaded && loading ? (
+            <div role="status" className="space-y-3 p-5">
+              {[1, 2, 3].map((item) => (
+                <div
+                  key={item}
+                  className="h-20 animate-pulse rounded-xl bg-slate-100"
+                />
+              ))}
+              <span className="sr-only">Loading agreements...</span>
+            </div>
+          ) : !filteredAgreements.length ? (
+            <div className="px-6 py-16 text-center">
+              <FileText className="mx-auto mb-4 h-10 w-10 text-indigo-300" />
+              <h3 className="font-bold text-slate-800">
+                {!loaded
+                  ? 'Could not load agreements'
+                  : 'No agreements found'}
+              </h3>
+              <p className="mt-2 text-sm text-slate-500">
+                {!loaded
+                  ? 'Refresh to try again.'
+                  : 'Create your first lease agreement to get started.'}
+              </p>
+            </div>
+          ) : (
+            <>
+              {/* Mobile cards */}
+              <div className="grid gap-4 bg-slate-50/60 p-4 sm:grid-cols-2 lg:hidden">
+                {filteredAgreements.map((agreement) => (
+                  <article
+                    key={agreement._id}
+                    className="min-w-0 rounded-2xl border border-slate-200 bg-white p-4"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <Avatar name={agreement.tenant?.name} />
+                        <div className="min-w-0">
+                          <h3 className="break-words font-bold text-slate-900">
+                            {agreement.tenant?.name || 'Unavailable'}
+                          </h3>
+                          <p className="mt-1 text-xs text-slate-500">
+                            {agreement.tenant?.cnic || '—'}
+                          </p>
+                        </div>
+                      </div>
+                      <Badge value={agreement.status} />
+                    </div>
 
-                    <td className="px-4 py-4 font-semibold">
-                      {agreement.tenant?.name || 'Unavailable'}
-                    </td>
+                    <div className="mt-5 space-y-3 text-sm">
+                      <div className="flex gap-2 text-slate-600">
+                        <Building className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                        <span>{shopLabel(agreement)}</span>
+                      </div>
+                      <div className="flex gap-2 text-slate-500">
+                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-slate-400" />
+                        <span>
+                          {displayDate(agreement.startDate)} →{' '}
+                          {displayDate(agreement.endDate)}
+                        </span>
+                      </div>
+                      <div className="flex gap-2 text-emerald-700 font-semibold">
+                        <Wallet className="mt-0.5 h-4 w-4 shrink-0" />
+                        <span>
+                          {money(
+                            agreement.monthlyRent ??
+                              agreement.rentAmount
+                          )}
+                        </span>
+                      </div>
+                    </div>
 
-                    <td className="px-4 py-4 text-xs text-slate-600">
-                      <div>{agreement.tenant?.phone || '—'}</div>
-                      <div className="mt-1">{agreement.tenant?.cnic || '—'}</div>
-                    </td>
-
-                    <td className="px-4 py-4 text-xs whitespace-nowrap">
-                      {displayDate(agreement.startDate)}
-                      {' → '}
-                      {displayDate(agreement.endDate)}
-                    </td>
-
-                    <td className="px-4 py-4 font-bold text-emerald-700 whitespace-nowrap">
-                      {money(agreement.monthlyRent ?? agreement.rentAmount)}
-                    </td>
-
-                    <td className="px-4 py-4">
-                      <span
-                        className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                          agreement.status === 'Active'
-                            ? 'bg-emerald-100 text-emerald-800'
-                            : 'bg-slate-100 text-slate-700'
-                        }`}
-                      >
-                        {agreement.status || '—'}
-                      </span>
-                    </td>
-
-                    <td className="px-4 py-4">
+                    <div className="mt-4 border-t border-slate-100 pt-4">
                       <button
-                        onClick={() => setSelectedAgreement(agreement)}
-                        className="text-blue-900 bg-blue-50 px-3 py-2 rounded-lg text-xs font-semibold whitespace-nowrap"
+                        type="button"
+                        onClick={() =>
+                          setSelectedAgreement(agreement)
+                        }
+                        className={`${buttonClass} w-full bg-indigo-50 px-3 text-indigo-700 hover:bg-indigo-100`}
                       >
+                        <Printer className="h-4 w-4" />
                         View / Print
                       </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+
+              {/* Desktop table */}
+              <div className="hidden overflow-x-auto lg:block">
+                <table className="w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-[10px] uppercase tracking-wider text-slate-500">
+                    <tr>
+                      {[
+                        'Shops',
+                        'Tenant',
+                        'Contact',
+                        'Lease period',
+                        'Monthly rent',
+                        'Status',
+                        'Action',
+                      ].map((label) => (
+                        <th
+                          key={label}
+                          scope="col"
+                          className="px-5 py-4"
+                        >
+                          {label}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+
+                  <tbody className="divide-y divide-slate-100">
+                    {filteredAgreements.map((agreement) => (
+                      <tr
+                        key={agreement._id}
+                        className="hover:bg-indigo-50/30"
+                      >
+                        <td className="px-5 py-4 font-semibold">
+                          <span className="inline-flex items-center gap-2">
+                            <Building className="h-4 w-4 text-indigo-600" />
+                            {shopLabel(agreement)}
+                          </span>
+                        </td>
+
+                        <td className="px-5 py-4">
+                          <div className="flex items-center gap-3">
+                            <Avatar name={agreement.tenant?.name} />
+                            <div className="min-w-[120px]">
+                              <p className="max-w-[180px] break-words font-semibold text-slate-900">
+                                {agreement.tenant?.name ||
+                                  'Unavailable'}
+                              </p>
+                              <p className="mt-1 whitespace-nowrap text-xs text-slate-400">
+                                {agreement.tenant?.cnic || '—'}
+                              </p>
+                            </div>
+                          </div>
+                        </td>
+
+                        <td className="px-5 py-4 text-xs">
+                          <p className="whitespace-nowrap">
+                            {agreement.tenant?.phone || '—'}
+                          </p>
+                          {agreement.tenant?.whatsapp && (
+                            <p className="mt-1 whitespace-nowrap text-emerald-700">
+                              WA: {agreement.tenant.whatsapp}
+                            </p>
+                          )}
+                        </td>
+
+                        <td className="px-5 py-4 text-xs whitespace-nowrap">
+                          {displayDate(agreement.startDate)}
+                          {' → '}
+                          {displayDate(agreement.endDate)}
+                        </td>
+
+                        <td className="px-5 py-4 font-bold text-emerald-700 whitespace-nowrap">
+                          {money(
+                            agreement.monthlyRent ??
+                              agreement.rentAmount
+                          )}
+                        </td>
+
+                        <td className="px-5 py-4">
+                          <Badge value={agreement.status} />
+                        </td>
+
+                        <td className="px-5 py-4">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setSelectedAgreement(agreement)
+                            }
+                            className={`${buttonClass} bg-indigo-50 px-3 text-indigo-700 hover:bg-indigo-100`}
+                          >
+                            <Printer className="h-4 w-4" />
+                            View / Print
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </section>
       </div>
 
       {/* ==================== CREATE FORM ==================== */}
 
-      {isModalOpen && (
+      {isModalOpen && createPortal(
         <div
           role="dialog"
           aria-modal="true"
           aria-label="Create lease agreement"
-          className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"
+          className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/60 backdrop-blur-sm sm:items-center sm:p-6"
         >
-          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-xl">
-            <div className="sticky top-0 bg-slate-900 text-white px-6 py-4 flex justify-between items-center">
-              <h3 className="font-bold">Create Lease Agreement</h3>
+          <div className="flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl border border-white/20 bg-white shadow-2xl outline-none sm:max-w-2xl sm:rounded-2xl">
+            <div className="flex shrink-0 items-start gap-3 border-b border-slate-100 p-5 sm:p-6">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+                <FileText className="h-5 w-5" />
+              </span>
+
+              <div className="min-w-0 flex-1">
+                <h2 className="text-lg font-bold text-slate-900">
+                  Create lease agreement
+                </h2>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Select units, tenant and lease terms.
+                </p>
+              </div>
 
               <button
-                onClick={() => setIsModalOpen(false)}
+                type="button"
                 disabled={saving}
+                onClick={() => setIsModalOpen(false)}
                 aria-label="Close form"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-40"
               >
-                <X className="w-6 h-6" />
+                <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-6 space-y-5">
-              {formError && <Alert>{formError}</Alert>}
-              {!formReady && !loading && (
-                <Alert>Shop or tenant data could not be loaded. Close this form and refresh.</Alert>
-              )}
-              {loading && (
-                <p className="text-sm text-blue-800">Refreshing shops and tenants...</p>
-              )}
-
-              <fieldset disabled={saving || loading || !formReady} className="space-y-5">
-                <div>
-                  <p className="text-xs font-bold uppercase text-slate-600 mb-2">
-                    Select Available Shops — {formData.shopIds.length} selected
+            <form
+              onSubmit={handleSubmit}
+              className="flex min-h-0 flex-1 flex-col"
+            >
+              <div className="min-h-0 overflow-y-auto overscroll-contain p-5 sm:p-6 space-y-5">
+                {formError && <Notice>{formError}</Notice>}
+                {!formReady && !loading && (
+                  <Notice>
+                    Shop or tenant data could not be loaded. Close
+                    this form and refresh.
+                  </Notice>
+                )}
+                {loading && (
+                  <p className="flex items-center gap-2 text-sm text-indigo-700">
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                    Refreshing shops and tenants...
                   </p>
+                )}
 
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto border border-slate-200 p-3 rounded-xl">
-                    {!availableShops.length ? (
-                      <p className="text-sm text-slate-500">
-                        No available shops.
-                      </p>
-                    ) : (
-                      availableShops.map((shop) => (
-                        <label
-                          key={shop._id}
-                          className="flex items-center gap-2 p-3 rounded-lg border border-slate-200 text-sm"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={formData.shopIds.includes(shop._id)}
-                            onChange={() => toggleShop(shop._id)}
-                          />
-                          <span>
-                            Shop #{shop.shopNumber}
-                            <span className="block text-xs text-slate-500">
-                              {shop.floor} · {shop.sizeSqFt ?? '—'} sq ft
+                <fieldset
+                  disabled={saving || loading || !formReady}
+                  className="space-y-5"
+                >
+                  <div>
+                    <p className="mb-2 text-xs font-semibold text-slate-600">
+                      Available shops — {formData.shopIds.length}{' '}
+                      selected
+                    </p>
+
+                    <div className="grid max-h-48 grid-cols-1 gap-2 overflow-y-auto rounded-xl border border-slate-200 p-3 sm:grid-cols-2">
+                      {!availableShops.length ? (
+                        <p className="text-sm text-slate-500">
+                          No available shops.
+                        </p>
+                      ) : (
+                        availableShops.map((shop) => (
+                          <label
+                            key={shop._id}
+                            className={`flex cursor-pointer items-center gap-2 rounded-lg border p-3 text-sm transition ${
+                              formData.shopIds.includes(shop._id)
+                                ? 'border-indigo-300 bg-indigo-50'
+                                : 'border-slate-200 hover:bg-slate-50'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={formData.shopIds.includes(
+                                shop._id
+                              )}
+                              onChange={() => toggleShop(shop._id)}
+                              className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                            />
+                            <span>
+                              Shop #{shop.shopNumber}
+                              <span className="block text-xs text-slate-500">
+                                {shop.floor} ·{' '}
+                                {shop.sizeSqFt ?? '—'} sq ft
+                              </span>
                             </span>
+                          </label>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
+                  <label className="block">
+                    <span className="mb-2 block text-xs font-semibold text-slate-600">
+                      Existing or new tenant
+                    </span>
+                    <select
+                      name="tenantId"
+                      value={formData.tenantId}
+                      onChange={handleChange}
+                      className={inputClass}
+                    >
+                      <option value="">Register new tenant</option>
+                      {tenants.map((tenant) => (
+                        <option key={tenant._id} value={tenant._id}>
+                          {tenant.name} —{' '}
+                          {tenant.cnic || tenant.phone}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    {tenantFields.map(
+                      ([name, label, required, type]) => (
+                        <label
+                          key={name}
+                          className={`block min-w-0 ${
+                            name === 'tenantName'
+                              ? 'sm:col-span-2'
+                              : ''
+                          }`}
+                        >
+                          <span className="mb-2 block text-xs font-semibold text-slate-600">
+                            {label}
+                            {required && !formData.tenantId && (
+                              <span className="ml-1 text-indigo-500">
+                                *
+                              </span>
+                            )}
                           </span>
+                          <input
+                            type={type}
+                            name={name}
+                            value={formData[name]}
+                            onChange={handleChange}
+                            required={
+                              required && !formData.tenantId
+                            }
+                            disabled={Boolean(formData.tenantId)}
+                            className={inputClass}
+                          />
                         </label>
-                      ))
+                      )
                     )}
                   </div>
-                </div>
 
-                <Field label="Existing or New Tenant">
-                  <select
-                    name="tenantId"
-                    value={formData.tenantId}
-                    onChange={handleChange}
-                    className={inputClass}
-                  >
-                    <option value="">Register New Tenant</option>
-
-                    {tenants.map((tenant) => (
-                      <option key={tenant._id} value={tenant._id}>
-                        {tenant.name} — {tenant.cnic || tenant.phone}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {tenantFields.map(([name, label, required, type]) => (
-                    <Field key={name} label={label}>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                    <label className="block">
+                      <span className="mb-2 block text-xs font-semibold text-slate-600">
+                        Start date
+                      </span>
                       <input
-                        type={type}
-                        name={name}
-                        value={formData[name]}
+                        type="date"
+                        name="startDate"
+                        value={formData.startDate}
                         onChange={handleChange}
-                        required={required && !formData.tenantId}
-                        disabled={Boolean(formData.tenantId)}
+                        required
                         className={inputClass}
                       />
-                    </Field>
-                  ))}
-                </div>
+                    </label>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <Field label="Start Date">
-                    <input
-                      type="date"
-                      name="startDate"
-                      value={formData.startDate}
-                      onChange={handleChange}
-                      required
-                      className={inputClass}
-                    />
-                  </Field>
+                    <label className="block">
+                      <span className="mb-2 block text-xs font-semibold text-slate-600">
+                        Expiry date
+                      </span>
+                      <input
+                        type="date"
+                        name="endDate"
+                        min={formData.startDate || undefined}
+                        value={formData.endDate}
+                        onChange={handleChange}
+                        required
+                        className={inputClass}
+                      />
+                    </label>
+                  </div>
 
-                  <Field label="Expiry Date">
-                    <input
-                      type="date"
-                      name="endDate"
-                      min={formData.startDate || undefined}
-                      value={formData.endDate}
-                      onChange={handleChange}
-                      required
-                      className={inputClass}
-                    />
-                  </Field>
-                </div>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                    <label className="block">
+                      <span className="mb-2 block text-xs font-semibold text-slate-600">
+                        Combined monthly rent
+                      </span>
+                      <input
+                        type="number"
+                        name="rentAmount"
+                        min="0.01"
+                        step="0.01"
+                        value={formData.rentAmount}
+                        onChange={handleChange}
+                        required
+                        className={inputClass}
+                      />
+                    </label>
 
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                  <Field label="Combined Monthly Rent">
-                    <input
-                      type="number"
-                      name="rentAmount"
-                      min="0.01"
-                      step="0.01"
-                      value={formData.rentAmount}
-                      onChange={handleChange}
-                      required
-                      className={inputClass}
-                    />
-                  </Field>
+                    <label className="block">
+                      <span className="mb-2 block text-xs font-semibold text-slate-600">
+                        Security deposit
+                      </span>
+                      <input
+                        type="number"
+                        name="securityDeposit"
+                        min="0"
+                        step="0.01"
+                        value={formData.securityDeposit}
+                        onChange={handleChange}
+                        required
+                        placeholder="0 if none"
+                        className={inputClass}
+                      />
+                    </label>
 
-                  <Field label="Security Deposit">
-                    <input
-                      type="number"
-                      name="securityDeposit"
-                      min="0"
-                      step="0.01"
-                      value={formData.securityDeposit}
-                      onChange={handleChange}
-                      required
-                      placeholder="0 if none"
-                      className={inputClass}
-                    />
-                  </Field>
+                    <label className="block">
+                      <span className="mb-2 block text-xs font-semibold text-slate-600">
+                        Annual increment (%)
+                      </span>
+                      <input
+                        type="number"
+                        name="incrementPercentage"
+                        min="0"
+                        step="0.01"
+                        value={formData.incrementPercentage}
+                        onChange={handleChange}
+                        required
+                        className={inputClass}
+                      />
+                    </label>
+                  </div>
 
-                  <Field label="Annual Increment (%)">
-                    <input
-                      type="number"
-                      name="incrementPercentage"
-                      min="0"
-                      step="0.01"
-                      value={formData.incrementPercentage}
-                      onChange={handleChange}
-                      required
-                      className={inputClass}
-                    />
-                  </Field>
-                </div>
+                  <p className="text-xs text-slate-500">
+                    Monthly rent is the combined amount for all
+                    selected shops.
+                  </p>
+                </fieldset>
+              </div>
 
-                <p className="text-xs text-slate-500">
-                  Monthly rent is the combined amount for all selected shops.
-                </p>
+              <div
+                className="flex shrink-0 flex-wrap gap-3 border-t border-slate-100 bg-slate-50 px-5 py-4 sm:justify-end sm:px-6"
+                style={{
+                  paddingBottom:
+                    'max(1rem, env(safe-area-inset-bottom))',
+                }}
+              >
+                <button
+                  type="button"
+                  disabled={saving}
+                  onClick={() => setIsModalOpen(false)}
+                  className={`${secondaryButton} flex-1 sm:flex-none`}
+                >
+                  Cancel
+                </button>
 
-                <div className="flex justify-end gap-3 border-t border-slate-200 pt-4">
-                  <button
-                    type="button"
-                    onClick={() => setIsModalOpen(false)}
-                    className={secondaryClass}
-                  >
-                    Cancel
-                  </button>
-
-                  <button
-                    type="submit"
-                    disabled={!availableShops.length}
-                    className={buttonClass}
-                  >
-                    {saving ? 'Saving...' : 'Save Agreement'}
-                  </button>
-                </div>
-              </fieldset>
+                <button
+                  type="submit"
+                  disabled={!availableShops.length || saving}
+                  className={`${primaryButton} flex-1 sm:flex-none`}
+                >
+                  {saving ? (
+                    <RefreshCw className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Plus className="h-4 w-4" />
+                  )}
+                  {saving ? 'Saving…' : 'Save agreement'}
+                </button>
+              </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
-      {/* Portal keeps print output separate from the app/sidebar. */}
+      {/* ==================== PRINT PREVIEW ==================== */}
 
       {selectedAgreement && createPortal(
         <div
@@ -853,7 +1202,7 @@ const AgreementsPage = () => {
           role="dialog"
           aria-modal="true"
           aria-label="Agreement preview"
-          className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"
+          className="fixed inset-0 z-[100] flex items-end justify-center bg-slate-950/60 backdrop-blur-sm sm:items-center sm:p-6"
         >
           <style>{`
             @media print {
@@ -874,6 +1223,7 @@ const AgreementsPage = () => {
                 position: static !important;
                 background: white !important;
                 padding: 0 !important;
+                backdrop-filter: none !important;
               }
 
               #agreement-print-preview .agreement-document {
@@ -896,110 +1246,141 @@ const AgreementsPage = () => {
             }
           `}</style>
 
-          <div className="agreement-document bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-6 md:p-8">
-            <div className="no-print flex justify-between items-center gap-4 border-b border-slate-200 pb-4">
-              <h2 className="text-xl font-bold text-slate-900">
-                Agreement Preview
-              </h2>
+          <div className="agreement-document flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-3xl border border-white/20 bg-white shadow-2xl sm:max-w-3xl sm:rounded-2xl">
+            <div className="no-print flex shrink-0 items-start gap-3 border-b border-slate-100 p-5 sm:p-6">
+              <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600">
+                <Printer className="h-5 w-5" />
+              </span>
+
+              <div className="min-w-0 flex-1">
+                <h2 className="text-lg font-bold text-slate-900">
+                  Agreement preview
+                </h2>
+                <p className="mt-1 text-xs leading-5 text-slate-500">
+                  Review and print the lease deed.
+                </p>
+              </div>
 
               <button
+                type="button"
                 onClick={() => setSelectedAgreement(null)}
                 aria-label="Close preview"
+                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
               >
-                <X className="w-6 h-6" />
+                <X className="h-5 w-5" />
               </button>
             </div>
 
-            <div className="py-6 text-sm text-slate-800 leading-relaxed space-y-5">
-              <h2 className="text-center font-bold text-lg">
-                COMMERCIAL COMPOSITE RENTAL DEED
-              </h2>
-
-              <p>
-                This agreement is between Plaza Management (First Party)
-                and <strong>{selectedAgreement.tenant?.name || 'Unavailable'}</strong>
-                {' '}(CNIC: {selectedAgreement.tenant?.cnic || 'Unavailable'}),
-                hereinafter referred to as the Tenant.
-              </p>
-
-              <div className="space-y-3">
-                <p>
-                  <strong>Rented Commercial Units:</strong>{' '}
-                  {getShops(selectedAgreement).map((shop) =>
-                    `Shop #${shop.shopNumber ?? 'Unavailable'}${
-                      shop.floor != null ? ` (${shop.floor})` : ''
-                    }`
-                  ).join(', ') || 'Unavailable'}
-                </p>
+            <div className="min-h-0 overflow-y-auto overscroll-contain p-6 sm:p-8">
+              <div className="space-y-5 text-sm leading-relaxed text-slate-800">
+                <h2 className="text-center text-lg font-bold">
+                  COMMERCIAL COMPOSITE RENTAL DEED
+                </h2>
 
                 <p>
-                  <strong>Lease Duration:</strong>{' '}
-                  {displayDate(selectedAgreement.startDate)}
-                  {' to '}
-                  {displayDate(selectedAgreement.endDate)}
+                  This agreement is between Khalil Plaza (First
+                  Party) and{' '}
+                  <strong>
+                    {selectedAgreement.tenant?.name || 'Unavailable'}
+                  </strong>{' '}
+                  (CNIC:{' '}
+                  {selectedAgreement.tenant?.cnic || 'Unavailable'}),
+                  hereinafter referred to as the Tenant.
                 </p>
 
-                <p>
-                  <strong>Combined Monthly Rent:</strong>{' '}
-                  {money(
-                    selectedAgreement.monthlyRent ??
-                    selectedAgreement.rentAmount
-                  )}
-                </p>
-
-                <p>
-                  <strong>Security Deposit:</strong>{' '}
-                  {money(selectedAgreement.securityDeposit)} (Refundable)
-                </p>
-
-                <p>
-                  <strong>Annual Rent Escalation:</strong>{' '}
-                  {number(selectedAgreement.incrementPercentage)}%
-                  {' after every 12 months.'}
-                </p>
-
-                <p>
-                  <strong>Tenant Phone:</strong>{' '}
-                  {selectedAgreement.tenant?.phone || '—'}
-                </p>
-              </div>
-
-              <p>
-                <strong>Terms & Conditions:</strong>{' '}
-                The tenant is authorized to combine these commercial units
-                for unified office/showroom operations, maintain utility
-                payments on time, and clear dues monthly.
-              </p>
-
-              <div className="signatures grid grid-cols-2 gap-8 pt-16 text-center">
-                <div className="border-t border-slate-400 pt-3">
-                  <p className="font-bold">Plaza Management Authority</p>
-                  <p className="text-xs mt-2">Signature / Date</p>
-                </div>
-
-                <div className="border-t border-slate-400 pt-3">
-                  <p className="font-bold">
-                    {selectedAgreement.tenant?.name || 'Tenant'}
+                <div className="space-y-3">
+                  <p>
+                    <strong>Rented Commercial Units:</strong>{' '}
+                    {getShops(selectedAgreement)
+                      .map(
+                        (shop) =>
+                          `Shop #${
+                            shop.shopNumber ?? 'Unavailable'
+                          }${
+                            shop.floor != null
+                              ? ` (${shop.floor})`
+                              : ''
+                          }`
+                      )
+                      .join(', ') || 'Unavailable'}
                   </p>
-                  <p className="text-xs mt-2">Signature / Date</p>
+
+                  <p>
+                    <strong>Lease Duration:</strong>{' '}
+                    {displayDate(selectedAgreement.startDate)}
+                    {' to '}
+                    {displayDate(selectedAgreement.endDate)}
+                  </p>
+
+                  <p>
+                    <strong>Combined Monthly Rent:</strong>{' '}
+                    {money(
+                      selectedAgreement.monthlyRent ??
+                        selectedAgreement.rentAmount
+                    )}
+                  </p>
+
+                  <p>
+                    <strong>Security Deposit:</strong>{' '}
+                    {money(selectedAgreement.securityDeposit)}{' '}
+                    (Refundable)
+                  </p>
+
+                  <p>
+                    <strong>Annual Rent Escalation:</strong>{' '}
+                    {number(
+                      selectedAgreement.incrementPercentage
+                    )}
+                    % after every 12 months.
+                  </p>
+
+                  <p>
+                    <strong>Tenant Phone:</strong>{' '}
+                    {selectedAgreement.tenant?.phone || '—'}
+                  </p>
+                </div>
+
+                <p>
+                  <strong>Terms &amp; Conditions:</strong> The tenant
+                  is authorized to combine these commercial units for
+                  unified office/showroom operations, maintain
+                  utility payments on time, and clear dues monthly.
+                </p>
+
+                <div className="signatures grid grid-cols-2 gap-8 pt-16 text-center">
+                  <div className="border-t border-slate-400 pt-3">
+                    <p className="font-bold">
+                      Khalil Plaza Authority
+                    </p>
+                    <p className="mt-2 text-xs">Signature / Date</p>
+                  </div>
+
+                  <div className="border-t border-slate-400 pt-3">
+                    <p className="font-bold">
+                      {selectedAgreement.tenant?.name || 'Tenant'}
+                    </p>
+                    <p className="mt-2 text-xs">Signature / Date</p>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <div className="no-print flex justify-end gap-3 border-t border-slate-200 pt-4">
+            <div className="no-print flex shrink-0 flex-wrap gap-3 border-t border-slate-100 bg-slate-50 px-5 py-4 sm:justify-end sm:px-6">
               <button
-                onClick={() => window.print()}
-                className={buttonClass}
-              >
-                <Printer className="w-4 h-4" />
-                Print Agreement
-              </button>
-
-              <button
+                type="button"
                 onClick={() => setSelectedAgreement(null)}
-                className={secondaryClass}
+                className={`${secondaryButton} flex-1 sm:flex-none`}
               >
                 Close
+              </button>
+
+              <button
+                type="button"
+                onClick={() => window.print()}
+                className={`${primaryButton} flex-1 sm:flex-none`}
+              >
+                <Printer className="h-4 w-4" />
+                Print agreement
               </button>
             </div>
           </div>
