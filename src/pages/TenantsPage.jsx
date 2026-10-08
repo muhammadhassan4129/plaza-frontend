@@ -1,463 +1,803 @@
-import React, { useState, useEffect } from 'react';
-import { fetchTenants, createTenant, deleteTenant } from '../services/tenantService';
-import { Plus, Trash2, X, Users, UserCheck, FileText, BarChart2 } from 'lucide-react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
-const TenantsPage = () => {
-  const [tenants, setTenants] = useState([]);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  
-  // Report Modal States
-  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
-  const [selectedTenantReport, setSelectedTenantReport] = useState(null);
+import { createPortal } from 'react-dom';
 
-  const [formData, setFormData] = useState({
-    name: '',
-    cnic: '',
-    phone: '',
-    whatsapp: '',
-    address: '',
-    emergencyContact: '',
-    status: 'Active',
-  });
+import {
+  fetchTenants,
+  createTenant,
+  deleteTenant,
+  fetchTenantLedger,
+  getTenantDocumentUrl,
+} from '../services/tenantService';
 
-  // Separate state for files upload
-  const [files, setFiles] = useState({
-    scannedCnic: null,
-    businessRegistration: null,
-    signedContract: null,
-  });
+const emptyForm = () => ({
+  name: '',
+  cnic: '',
+  phone: '',
+  whatsapp: '',
+  address: '',
+  emergencyContact: '',
+  status: 'Active',
+});
 
+const fieldDefinitions = [
+  ['name', 'Tenant Full Name', true],
+  ['cnic', 'CNIC Number', true],
+  ['phone', 'Phone Number', true],
+  ['whatsapp', 'WhatsApp Number', false],
+  ['address', 'Permanent Address', true],
+  ['emergencyContact', 'Emergency Contact', false],
+];
+
+const fileDefinitions = [
+  ['scannedCnic', 'Scanned CNIC'],
+  ['businessRegistration', 'Business Registration'],
+  ['signedContract', 'Signed Contract'],
+];
+
+const inputClass =
+  'mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm';
+
+const buttonClass =
+  'rounded-lg border px-3 py-2 text-sm disabled:opacity-50';
+
+const money = (value) =>
+  `PKR ${Number(value || 0).toLocaleString('en-PK', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+
+const messageOf = (error, fallback) =>
+  error.response?.data?.message || fallback;
+
+function TenantReport({ tenant, onClose }) {
+  const [report, setReport] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [successMsg, setSuccessMsg] = useState('');
 
-  // Load Tenants
-  const loadTenants = async () => {
-    try {
-      const res = await fetchTenants();
-      setTenants(res.data);
-    } catch (err) {
-      setError('Failed to load tenants');
-    }
-  };
+  const mounted = useRef(false);
+  const requestId = useRef(0);
 
-  useEffect(() => {
-    loadTenants();
-  }, []);
+  const loadReport = useCallback(async () => {
+    const current = ++requestId.current;
 
-  const handleChange = (e) => {
-    const { name, value } = e.target;
-    setFormData({ ...formData, [name]: value });
-  };
-
-  const handleFileChange = (e) => {
-    const { name, files: selectedFiles } = e.target;
-    if (selectedFiles && selectedFiles[0]) {
-      setFiles({ ...files, [name]: selectedFiles[0] });
-    }
-  };
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+    setLoading(true);
     setError('');
-    setSuccessMsg('');
+    setReport(null);
 
     try {
-      // Using FormData to handle file uploads properly
-      const data = new FormData();
-      data.append('name', formData.name);
-      data.append('cnic', formData.cnic);
-      data.append('phone', formData.phone);
-      data.append('whatsapp', formData.whatsapp);
-      data.append('address', formData.address);
-      data.append('emergencyContact', formData.emergencyContact);
-      data.append('status', formData.status);
+      const response = await fetchTenantLedger(tenant._id);
 
-      if (files.scannedCnic) data.append('documents', files.scannedCnic);
-      if (files.businessRegistration) data.append('documents', files.businessRegistration);
-      if (files.signedContract) data.append('documents', files.signedContract);
+      if (
+        !response.data?.financialSummary ||
+        !response.data?.invoicesSummary ||
+        !Array.isArray(response.data?.paymentHistory)
+      ) {
+        throw new Error('Invalid tenant report response');
+      }
 
-      const res = await createTenant(data);
-      setSuccessMsg(res.message || 'Tenant added successfully!');
-      
-      // Reset form
-      setFormData({
-        name: '',
-        cnic: '',
-        phone: '',
-        whatsapp: '',
-        address: '',
-        emergencyContact: '',
-        status: 'Active',
-      });
-      setFiles({ scannedCnic: null, businessRegistration: null, signedContract: null });
-      setIsModalOpen(false);
-      loadTenants();
-      setTimeout(() => setSuccessMsg(''), 3000);
+      if (mounted.current && current === requestId.current) {
+        setReport(response.data);
+      }
     } catch (err) {
-      setError(err.response?.data?.message || 'Error adding tenant');
-    }
-  };
-
-  const handleDelete = async (id) => {
-    if (window.confirm('Are you sure you want to delete this tenant?')) {
-      try {
-        await deleteTenant(id);
-        loadTenants();
-      } catch (err) {
-        console.error(err);
+      if (mounted.current && current === requestId.current) {
+        setError(
+          messageOf(err, 'Could not load the tenant report.')
+        );
+      }
+    } finally {
+      if (mounted.current && current === requestId.current) {
+        setLoading(false);
       }
     }
+  }, [tenant._id]);
+
+  useEffect(() => {
+    mounted.current = true;
+    loadReport();
+
+    const refresh = () => loadReport();
+    const visible = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+
+    window.addEventListener('focus', refresh);
+    window.addEventListener('plaza-finances-updated', refresh);
+    document.addEventListener('visibilitychange', visible);
+
+    return () => {
+      mounted.current = false;
+      requestId.current += 1;
+
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('plaza-finances-updated', refresh);
+      document.removeEventListener('visibilitychange', visible);
+    };
+  }, [loadReport]);
+
+  return createPortal(
+    <div
+      id="tenant-report-print"
+      className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 p-4"
+    >
+      <style>{`
+        @media print {
+          body > *:not(#tenant-report-print) {
+            display: none !important;
+          }
+
+          #tenant-report-print {
+            position: static !important;
+            overflow: visible !important;
+            padding: 0 !important;
+            background: white !important;
+          }
+
+          #tenant-report-print .report-card {
+            max-width: none !important;
+            margin: 0 !important;
+            box-shadow: none !important;
+          }
+
+          #tenant-report-print .no-print {
+            display: none !important;
+          }
+
+          #tenant-report-print .report-table {
+            overflow: visible !important;
+          }
+
+          #tenant-report-print thead {
+            display: table-header-group;
+          }
+
+          #tenant-report-print tr {
+            break-inside: avoid;
+          }
+        }
+      `}</style>
+
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tenant-report-title"
+        className="report-card mx-auto my-6 max-w-4xl rounded-xl bg-white p-5 shadow-xl"
+      >
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <h2 id="tenant-report-title" className="text-xl font-bold">
+            Tenant Report — All Months
+          </h2>
+
+          <button
+            className={`${buttonClass} no-print`}
+            onClick={onClose}
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="mb-5 rounded-lg bg-slate-50 p-4 text-sm">
+          <p className="text-lg font-semibold">{tenant.name}</p>
+          <p>CNIC: {tenant.cnic}</p>
+          <p>Phone: {tenant.phone}</p>
+          <p>WhatsApp: {tenant.whatsapp || '—'}</p>
+          <p>Emergency Contact: {tenant.emergencyContact || '—'}</p>
+          <p>Address: {tenant.permanentAddress || tenant.address || '—'}</p>
+          <p>Documents: {tenant.documents?.length || 0}</p>
+        </div>
+
+        {loading && <p role="status">Loading current report...</p>}
+
+        {error && (
+          <div role="alert" className="rounded-lg bg-red-50 p-4 text-red-700">
+            {error}
+          </div>
+        )}
+
+        {!loading && report && (
+          <>
+            <div className="mb-5 grid gap-3 sm:grid-cols-3">
+              {[
+                ['Total Collected', money(report.financialSummary.totalCollected)],
+                ['Outstanding', money(report.financialSummary.totalOutstanding)],
+                ['Paid Invoices', report.invoicesSummary.paid],
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-lg border p-4">
+                  <p className="text-sm text-slate-500">{label}</p>
+                  <p className="text-lg font-bold">{value}</p>
+                </div>
+              ))}
+            </div>
+
+            <p className="mb-3 text-sm text-slate-600">
+              Agreements: {report.agreementCount} | Invoices:{' '}
+              {report.invoicesSummary.total} | Partial:{' '}
+              {report.invoicesSummary.partial} | Unpaid:{' '}
+              {report.invoicesSummary.unpaid}
+            </p>
+
+            <div className="report-table overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead className="bg-slate-100">
+                  <tr>
+                    {['Month', 'Invoice', 'Total', 'Paid', 'Balance', 'Status'].map(
+                      (title) => (
+                        <th key={title} className="p-3">{title}</th>
+                      )
+                    )}
+                  </tr>
+                </thead>
+
+                <tbody>
+                  {report.paymentHistory.map((invoice, index) => (
+                    <tr
+                      key={invoice.invoiceId || invoice.id || `${invoice.invoiceNumber}-${index}`}
+                      className="border-b"
+                    >
+                      <td className="p-3">{invoice.monthYear}</td>
+                      <td className="p-3">{invoice.invoiceNumber}</td>
+                      <td className="p-3">{money(invoice.totalAmount)}</td>
+                      <td className="p-3">{money(invoice.paidAmount)}</td>
+                      <td className="p-3">{money(invoice.balanceDue)}</td>
+                      <td className="p-3">{invoice.status}</td>
+                    </tr>
+                  ))}
+
+                  {!report.paymentHistory.length && (
+                    <tr>
+                      <td colSpan={6} className="p-5 text-center">
+                        No invoices found.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+
+        <div className="no-print mt-5 flex justify-end gap-2">
+          <button
+            disabled={loading}
+            onClick={loadReport}
+            className={buttonClass}
+          >
+            Refresh Report
+          </button>
+
+          <button
+            disabled={loading || !report || Boolean(error)}
+            onClick={() => window.print()}
+            className={`${buttonClass} bg-purple-900 text-white`}
+          >
+            Print Report
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+export default function TenantsPage() {
+  const [tenants, setTenants] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+  const [formError, setFormError] = useState('');
+
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+
+  const [modalOpen, setModalOpen] = useState(false);
+  const [reportTenant, setReportTenant] = useState(null);
+  const [form, setForm] = useState(emptyForm);
+  const [files, setFiles] = useState({});
+
+  const mounted = useRef(false);
+  const requestId = useRef(0);
+  const actionLock = useRef(false);
+
+  const loadTenants = useCallback(async () => {
+    const current = ++requestId.current;
+
+    if (mounted.current) {
+      setLoading(true);
+      setError('');
+    }
+
+    try {
+      const response = await fetchTenants();
+
+      if (!Array.isArray(response.data)) {
+        throw new Error('Invalid tenants response');
+      }
+
+      if (mounted.current && current === requestId.current) {
+        setTenants(response.data);
+        setLoaded(true);
+      }
+    } catch (err) {
+      if (mounted.current && current === requestId.current) {
+        setError(
+          messageOf(err, 'Could not refresh tenants. Please try again.')
+        );
+      }
+    } finally {
+      if (mounted.current && current === requestId.current) {
+        setLoading(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    mounted.current = true;
+    loadTenants();
+
+    const refresh = () => {
+      if (!actionLock.current) loadTenants();
+    };
+
+    const visible = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
+
+    window.addEventListener('focus', refresh);
+    window.addEventListener('plaza-tenants-updated', refresh);
+    window.addEventListener('plaza-agreements-updated', refresh);
+    document.addEventListener('visibilitychange', visible);
+
+    return () => {
+      mounted.current = false;
+      requestId.current += 1;
+
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('plaza-tenants-updated', refresh);
+      window.removeEventListener('plaza-agreements-updated', refresh);
+      document.removeEventListener('visibilitychange', visible);
+    };
+  }, [loadTenants]);
+
+  const filteredTenants = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const digits = query.replace(/\D/g, '');
+
+    return tenants.filter((tenant) => {
+      if (statusFilter && tenant.status !== statusFilter) return false;
+
+      const text = [
+        tenant.name,
+        tenant.cnic,
+        tenant.phone,
+        tenant.whatsapp,
+        tenant.permanentAddress,
+      ].filter(Boolean).join(' ').toLowerCase();
+
+      const cnicMatch =
+        /^[\d\s-]+$/.test(query) &&
+        digits.length > 0 &&
+        String(tenant.cnic || '').replace(/\D/g, '').includes(digits);
+
+      return text.includes(query) || cnicMatch;
+    });
+  }, [tenants, search, statusFilter]);
+
+  const openForm = () => {
+    if (actionLock.current) return;
+
+    setForm(emptyForm());
+    setFiles({});
+    setFormError('');
+    setSuccess('');
+    setModalOpen(true);
   };
 
-  // Handler for opening the tenant report modal
-  const handleReport = (tenant) => {
-    setSelectedTenantReport(tenant);
-    setIsReportModalOpen(true);
+  const closeForm = () => {
+    if (!actionLock.current) setModalOpen(false);
+  };
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (actionLock.current) return;
+
+    setFormError('');
+
+    if (!form.name.trim() || !form.phone.trim() || !form.address.trim()) {
+      setFormError('Name, phone and address are required.');
+      return;
+    }
+
+    const cnic = form.cnic.replace(/[\s-]/g, '');
+
+    if (!/^\d{13}$/.test(cnic)) {
+      setFormError('CNIC must contain 13 digits.');
+      return;
+    }
+
+    const data = new FormData();
+
+    Object.entries(form).forEach(([key, value]) => {
+      data.append(key, key === 'cnic' ? cnic : value.trim());
+    });
+
+    Object.values(files).filter(Boolean).forEach((file) => {
+      data.append('documents', file);
+    });
+
+    actionLock.current = true;
+    requestId.current += 1;
+    setBusy(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      const response = await createTenant(data);
+
+      if (mounted.current) {
+        if (response.data?._id) {
+          setTenants((previous) => [
+            response.data,
+            ...previous.filter((item) => item._id !== response.data._id),
+          ]);
+        }
+
+        setModalOpen(false);
+        setForm(emptyForm());
+        setFiles({});
+        setSuccess(response.message || 'Tenant added successfully.');
+      }
+
+      await loadTenants();
+    } catch (err) {
+      const uncertain = !err.response || err.response.status >= 500;
+
+      if (mounted.current) {
+        if (uncertain) {
+          setModalOpen(false);
+        } else {
+          setFormError(messageOf(err, 'Could not add tenant.'));
+        }
+      }
+
+      await loadTenants();
+
+      if (mounted.current && uncertain) {
+        setError(
+          'Save confirmation was not received. Check the tenant list before submitting again.'
+        );
+      }
+    } finally {
+      actionLock.current = false;
+      if (mounted.current) setBusy(false);
+    }
+  };
+
+  const removeTenant = async (tenant) => {
+    if (actionLock.current) return;
+
+    if (!window.confirm(
+      `Delete ${tenant.name}? Tenants with agreement or payment history cannot be deleted.`
+    )) {
+      return;
+    }
+
+    actionLock.current = true;
+    requestId.current += 1;
+    setBusy(true);
+    setError('');
+    setSuccess('');
+
+    try {
+      const response = await deleteTenant(tenant._id);
+
+      if (mounted.current) {
+        setTenants((previous) =>
+          previous.filter((item) => item._id !== tenant._id)
+        );
+
+        setSuccess(response.message || 'Tenant deleted successfully.');
+      }
+
+      await loadTenants();
+    } catch (err) {
+      const message =
+        !err.response || err.response.status >= 500
+          ? 'Delete confirmation was not received. Check the refreshed list before retrying.'
+          : messageOf(err, 'Could not delete tenant.');
+
+      await loadTenants();
+      if (mounted.current) setError(message);
+    } finally {
+      actionLock.current = false;
+      if (mounted.current) setBusy(false);
+    }
   };
 
   return (
-    <div className="p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen">
-      {/* Header Section */}
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight flex items-center gap-3">
-            <Users className="w-8 h-8 text-blue-900" />
-            Tenants Directory (Dukan-dar)
-          </h1>
-          <p className="text-slate-500 text-sm mt-1">Manage verified tenant KYC details, CNIC records, and digital documents.</p>
+    <div className="min-h-screen bg-gray-50 p-4 md:p-8">
+      <div className="mx-auto max-w-7xl">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl font-bold text-slate-900">
+              Tenants Directory
+            </h1>
+            <p className="text-sm text-slate-500">
+              Tenant details, documents and payment reports.
+            </p>
+          </div>
+
+          <div className="flex gap-2">
+            <button
+              disabled={busy || loading}
+              onClick={loadTenants}
+              className={buttonClass}
+            >
+              Refresh
+            </button>
+
+            <button
+              disabled={busy}
+              onClick={openForm}
+              className={`${buttonClass} bg-blue-900 text-white`}
+            >
+              Add New Tenant
+            </button>
+          </div>
         </div>
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="bg-blue-900 hover:bg-blue-800 text-white px-5 py-2.5 rounded-xl font-medium shadow-md transition-all flex items-center gap-2"
-        >
-          <Plus className="w-5 h-5" /> Add New Tenant
-        </button>
-      </div>
 
-      {error && <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded-r-xl">{error}</div>}
-      {successMsg && <div className="bg-emerald-50 border-l-4 border-emerald-500 text-emerald-700 p-4 mb-6 rounded-r-xl">{successMsg}</div>}
+        {error && (
+          <div role="alert" className="mb-4 rounded-lg bg-red-50 p-4 text-red-700">
+            {error}
+          </div>
+        )}
 
-      {/* Tenants Table Card */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-900 text-white text-xs uppercase tracking-wider">
-                <th className="py-4 px-6 font-semibold">Tenant Name</th>
-                <th className="py-4 px-6 font-semibold">CNIC</th>
-                <th className="py-4 px-6 font-semibold">Phone / WhatsApp</th>
-                <th className="py-4 px-6 font-semibold">Address</th>
-                <th className="py-4 px-6 font-semibold">Documents</th>
-                <th className="py-4 px-6 font-semibold">Status</th>
-                <th className="py-4 px-6 font-semibold text-center">Actions</th>
+        {success && (
+          <div role="status" className="mb-4 rounded-lg bg-emerald-50 p-4 text-emerald-700">
+            {success}
+          </div>
+        )}
+
+        <div className="mb-4 flex flex-wrap gap-3">
+          <input
+            aria-label="Search tenants"
+            placeholder="Search name, CNIC, phone or address..."
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            className={`${inputClass} max-w-md`}
+          />
+
+          <select
+            aria-label="Filter tenant status"
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value)}
+            className={`${inputClass} max-w-xs`}
+          >
+            <option value="">All statuses</option>
+            <option value="Active">Active</option>
+            <option value="Inactive">Inactive</option>
+          </select>
+        </div>
+
+        <p className="mb-3 text-sm text-slate-500" aria-live="polite">
+          {loading
+            ? 'Loading tenants...'
+            : loaded
+            ? `Showing ${filteredTenants.length} of ${tenants.length} tenants`
+            : 'Tenants have not loaded.'}
+        </p>
+
+        <div className="overflow-x-auto rounded-xl border bg-white">
+          <table className="w-full text-left text-sm">
+            <thead className="bg-slate-900 text-white">
+              <tr>
+                {['Name', 'CNIC', 'Contact', 'Address', 'Documents', 'Status', 'Actions'].map(
+                  (title) => <th key={title} className="p-4">{title}</th>
+                )}
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100 text-slate-700 text-sm">
-              {tenants.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="text-center py-8 text-slate-400">
-                    No tenants found. Click "Add New Tenant" to get started.
+
+            <tbody className="divide-y">
+              {filteredTenants.map((tenant) => (
+                <tr key={tenant._id}>
+                  <td className="p-4 font-semibold">{tenant.name}</td>
+                  <td className="whitespace-nowrap p-4">{tenant.cnic}</td>
+
+                  <td className="p-4">
+                    <div>{tenant.phone}</div>
+                    {tenant.whatsapp && (
+                      <div className="text-xs text-emerald-700">
+                        WA: {tenant.whatsapp}
+                      </div>
+                    )}
+                  </td>
+
+                  <td className="p-4">
+                    {tenant.permanentAddress || tenant.address || '—'}
+                  </td>
+
+                  <td className="p-4">
+                    {tenant.documents?.length ? (
+                      tenant.documents.map((documentPath, index) => {
+                        const url = getTenantDocumentUrl(documentPath);
+
+                        return url ? (
+                          <a
+                            key={`${documentPath}-${index}`}
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block whitespace-nowrap text-blue-700 underline"
+                          >
+                            Document {index + 1}
+                          </a>
+                        ) : (
+                          <span key={index} className="block text-slate-500">
+                            Document {index + 1}: unavailable link
+                          </span>
+                        );
+                      })
+                    ) : 'No documents'}
+                  </td>
+
+                  <td className="p-4">{tenant.status}</td>
+
+                  <td className="p-4">
+                    <div className="flex gap-2">
+                      <button
+                        disabled={busy}
+                        onClick={() => setReportTenant(tenant)}
+                        className={`${buttonClass} text-purple-800`}
+                      >
+                        Report
+                      </button>
+
+                      <button
+                        disabled={busy}
+                        onClick={() => removeTenant(tenant)}
+                        className={`${buttonClass} text-red-700`}
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
-              ) : (
-                tenants.map((tenant) => (
-                  <tr key={tenant._id} className="hover:bg-slate-50/80 transition-colors">
-                    <td className="py-4 px-6 font-semibold text-slate-900 flex items-center gap-2 pt-5">
-                      <UserCheck className="w-4 h-4 text-blue-900" /> {tenant.name}
-                    </td>
-                    <td className="py-4 px-6 text-slate-600 font-mono text-xs">{tenant.cnic}</td>
-                    <td className="py-4 px-6 text-slate-600 text-xs">
-                      <div>P: {tenant.phone}</div>
-                      {tenant.whatsapp && <div className="text-emerald-700">WA: {tenant.whatsapp}</div>}
-                    </td>
-                    <td className="py-4 px-6 text-slate-600 truncate max-w-xs">{tenant.permanentAddress || tenant.address}</td>
-                    <td className="py-4 px-6 text-xs text-blue-700">
-                      {tenant.documents && tenant.documents.length > 0 ? (
-                        tenant.documents.map((doc, idx) => (
-                          <a key={idx} href={`http://localhost:5000/${doc}`} target="_blank" rel="noreferrer" className="block underline">
-                            Document {idx + 1}
-                          </a>
-                        ))
-                      ) : (
-                        <span className="text-slate-400">No docs</span>
-                      )}
-                    </td>
-                    <td className="py-4 px-6">
-                      <span className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                        tenant.status === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
-                      }`}>
-                        {tenant.status}
-                      </span>
-                    </td>
-                    <td className="py-4 px-6 text-center">
-                      <div className="flex items-center justify-center gap-2">
-                        {/* Report Button */}
-                        <button
-                          onClick={() => handleReport(tenant)}
-                          className="bg-purple-50 hover:bg-purple-100 text-purple-700 p-2 rounded-lg transition-colors inline-flex items-center gap-1 text-xs font-medium"
-                          title="View / Generate Report"
-                        >
-                          <BarChart2 className="w-4 h-4" /> Report
-                        </button>
+              ))}
 
-                        {/* Delete Button */}
-                        <button
-                          onClick={() => handleDelete(tenant._id)}
-                          className="text-rose-600 hover:text-rose-800 bg-rose-50 hover:bg-rose-100 p-2 rounded-lg transition-colors inline-flex items-center gap-1 text-xs font-medium"
-                          title="Delete Tenant"
-                        >
-                          <Trash2 className="w-4 h-4" /> Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+              {!filteredTenants.length && (
+                <tr>
+                  <td colSpan={7} className="p-8 text-center text-slate-500">
+                    {loading
+                      ? 'Loading...'
+                      : !loaded
+                      ? 'Unable to load tenants. Please try Refresh.'
+                      : tenants.length
+                      ? 'No tenants match your filters.'
+                      : 'No tenants found.'}
+                  </td>
+                </tr>
               )}
             </tbody>
           </table>
         </div>
+
+        {modalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4">
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="tenant-form-title"
+              className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-xl bg-white p-5 shadow-xl"
+            >
+              <div className="mb-4 flex items-center justify-between">
+                <h2 id="tenant-form-title" className="text-xl font-bold">
+                  Add Tenant
+                </h2>
+
+                <button disabled={busy} onClick={closeForm} className={buttonClass}>
+                  Close
+                </button>
+              </div>
+
+              {formError && (
+                <div role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-red-700">
+                  {formError}
+                </div>
+              )}
+
+              <form onSubmit={submit}>
+                <fieldset disabled={busy} className="space-y-4">
+                  {fieldDefinitions.map(([name, label, required]) => (
+                    <label key={name} className="block text-sm font-medium">
+                      {label}{required ? ' *' : ''}
+                      <input
+                        name={name}
+                        value={form[name]}
+                        required={required}
+                        type={['phone', 'whatsapp'].includes(name) ? 'tel' : 'text'}
+                        placeholder={name === 'cnic' ? '12345-1234567-1' : ''}
+                        onChange={(event) => {
+                          const { name: key, value } = event.target;
+                          setForm((previous) => ({ ...previous, [key]: value }));
+                        }}
+                        className={inputClass}
+                      />
+                    </label>
+                  ))}
+
+                  <div className="space-y-3 border-t pt-3">
+                    <p className="text-sm font-semibold">
+                      Optional Documents — Maximum 3 Files
+                    </p>
+
+                    {fileDefinitions.map(([name, label]) => (
+                      <label key={name} className="block text-sm">
+                        {label}
+                        <input
+                          type="file"
+                          name={name}
+                          accept=".jpg,.jpeg,.png,.pdf"
+                          onChange={(event) => {
+                            const file = event.target.files?.[0] || null;
+                            setFiles((previous) => ({ ...previous, [name]: file }));
+                          }}
+                          className={inputClass}
+                        />
+                      </label>
+                    ))}
+                  </div>
+
+                  <label className="block text-sm font-medium">
+                    Status
+                    <select
+                      value={form.status}
+                      onChange={(event) =>
+                        setForm((previous) => ({
+                          ...previous,
+                          status: event.target.value,
+                        }))
+                      }
+                      className={inputClass}
+                    >
+                      <option value="Active">Active</option>
+                      <option value="Inactive">Inactive</option>
+                    </select>
+                  </label>
+
+                  <div className="flex justify-end gap-2 border-t pt-4">
+                    <button type="button" onClick={closeForm} className={buttonClass}>
+                      Cancel
+                    </button>
+
+                    <button
+                      type="submit"
+                      className={`${buttonClass} bg-blue-900 text-white`}
+                    >
+                      {busy ? 'Saving...' : 'Save Tenant'}
+                    </button>
+                  </div>
+                </fieldset>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {reportTenant && (
+          <TenantReport
+            key={reportTenant._id}
+            tenant={tenants.find((item) => item._id === reportTenant._id) || reportTenant}
+            onClose={() => setReportTenant(null)}
+          />
+        )}
       </div>
-
-      {/* Add Tenant Modal */}
-      {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-100 my-8">
-            <div className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center">
-              <h3 className="text-lg font-bold flex items-center gap-2">
-                <Users className="w-5 h-5 text-blue-400" /> Add New Tenant Profile & KYC
-              </h3>
-              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-white transition-colors">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            <form onSubmit={handleSubmit} className="p-6 space-y-4 max-h-[80vh] overflow-y-auto">
-              <div>
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Tenant Full Name</label>
-                <input
-                  type="text"
-                  name="name"
-                  placeholder="e.g., Muhammad Ali"
-                  value={formData.name}
-                  onChange={handleChange}
-                  required
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900 focus:outline-none text-slate-800 text-sm"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold uppercase text-slate-600 mb-1">CNIC Number</label>
-                  <input
-                    type="text"
-                    name="cnic"
-                    placeholder="12301-1234567-1"
-                    value={formData.cnic}
-                    onChange={handleChange}
-                    required
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900 focus:outline-none text-slate-800 text-sm font-mono"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Phone Number</label>
-                  <input
-                    type="text"
-                    name="phone"
-                    placeholder="0300-1234567"
-                    value={formData.phone}
-                    onChange={handleChange}
-                    required
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900 focus:outline-none text-slate-800 text-sm"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-bold uppercase text-slate-600 mb-1">WhatsApp Number</label>
-                  <input
-                    type="text"
-                    name="whatsapp"
-                    placeholder="0300-1234567"
-                    value={formData.whatsapp}
-                    onChange={handleChange}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900 focus:outline-none text-slate-800 text-sm"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Emergency Contact</label>
-                  <input
-                    type="text"
-                    name="emergencyContact"
-                    placeholder="Reference phone #"
-                    value={formData.emergencyContact}
-                    onChange={handleChange}
-                    className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900 focus:outline-none text-slate-800 text-sm"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Permanent Address</label>
-                <input
-                  type="text"
-                  name="address"
-                  placeholder="House #, Street, City"
-                  value={formData.address}
-                  onChange={handleChange}
-                  required
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900 focus:outline-none text-slate-800 text-sm"
-                />
-              </div>
-
-              {/* File Upload Inputs */}
-              <div className="border-t border-slate-200 pt-3 space-y-3">
-                <p className="text-xs font-bold uppercase text-blue-900">Upload Digital Documents (CNIC / Agreement)</p>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Scanned CNIC File</label>
-                  <input
-                    type="file"
-                    name="scannedCnic"
-                    onChange={handleFileChange}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-900 hover:file:bg-blue-100"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Business Registration File</label>
-                  <input
-                    type="file"
-                    name="businessRegistration"
-                    onChange={handleFileChange}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-900 hover:file:bg-blue-100"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 mb-1">Signed Contract File</label>
-                  <input
-                    type="file"
-                    name="signedContract"
-                    onChange={handleFileChange}
-                    className="w-full px-3 py-2 rounded-xl border border-slate-300 text-xs bg-white file:mr-4 file:py-1 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-900 hover:file:bg-blue-100"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-1">Status</label>
-                <select
-                  name="status"
-                  value={formData.status}
-                  onChange={handleChange}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900 text-sm bg-white"
-                >
-                  <option value="Active">Active</option>
-                  <option value="Inactive">Inactive</option>
-                </select>
-              </div>
-
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 mt-6">
-                <button
-                  type="button"
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-5 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 font-medium text-sm transition-all"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2.5 rounded-xl bg-blue-900 hover:bg-blue-800 text-white font-medium text-sm shadow-md transition-all"
-                >
-                  Save Tenant Profile
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* Tenant Report Modal */}
-      {isReportModalOpen && selectedTenantReport && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden border border-slate-100 my-8">
-            <div className="bg-purple-900 text-white px-6 py-4 flex justify-between items-center">
-              <h3 className="text-lg font-bold flex items-center gap-2">
-                <BarChart2 className="w-5 h-5 text-purple-300" /> Tenant Summary & Report
-              </h3>
-              <button onClick={() => setIsReportModalOpen(false)} className="text-purple-200 hover:text-white transition-colors">
-                <X className="w-6 h-6" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-6 max-h-[80vh] overflow-y-auto text-slate-700 text-sm">
-              {/* Tenant Basic Info Card */}
-              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
-                <div className="flex justify-between items-center">
-                  <span className="font-bold text-slate-900 text-base">{selectedTenantReport.name}</span>
-                  <span className={`px-2.5 py-0.5 rounded-full text-xs font-semibold ${
-                    selectedTenantReport.status === 'Active' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
-                  }`}>
-                    {selectedTenantReport.status}
-                  </span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-xs pt-2 border-t border-slate-200 text-slate-600">
-                  <div><span className="font-semibold text-slate-700">CNIC:</span> {selectedTenantReport.cnic}</div>
-                  <div><span className="font-semibold text-slate-700">Phone:</span> {selectedTenantReport.phone}</div>
-                  <div><span className="font-semibold text-slate-700">WhatsApp:</span> {selectedTenantReport.whatsapp || 'N/A'}</div>
-                  <div><span className="font-semibold text-slate-700">Emergency:</span> {selectedTenantReport.emergencyContact || 'N/A'}</div>
-                </div>
-                <div className="text-xs pt-1"><span className="font-semibold text-slate-700">Address:</span> {selectedTenantReport.permanentAddress || selectedTenantReport.address}</div>
-              </div>
-
-              {/* Financial & Agreement Quick Stats */}
-              <div>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-purple-900 mb-3">Performance & Ledger Overview</h4>
-                <div className="grid grid-cols-3 gap-3">
-                  <div className="bg-purple-50 p-3 rounded-xl border border-purple-100 text-center">
-                    <span className="block text-xs text-purple-600 font-medium">Total Dues</span>
-                    <span className="text-base font-extrabold text-purple-900">PKR 0</span>
-                  </div>
-                  <div className="bg-emerald-50 p-3 rounded-xl border border-emerald-100 text-center">
-                    <span className="block text-xs text-emerald-600 font-medium">Paid Rentals</span>
-                    <span className="text-base font-extrabold text-emerald-900">0 Months</span>
-                  </div>
-                  <div className="bg-blue-50 p-3 rounded-xl border border-blue-100 text-center">
-                    <span className="block text-xs text-blue-600 font-medium">Documents</span>
-                    <span className="text-base font-extrabold text-blue-900">{selectedTenantReport.documents?.length || 0} Files</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Activity / Remarks section */}
-              <div>
-                <h4 className="text-xs font-bold uppercase tracking-wider text-purple-900 mb-2">Manager Notes & History</h4>
-                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-500 italic">
-                  No active warnings or fine history recorded for this tenant. All KYC verification documents are securely attached.
-                </div>
-              </div>
-
-              {/* Footer Actions */}
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
-                <button
-                  type="button"
-                  onClick={() => window.print()}
-                  className="px-4 py-2 rounded-xl bg-purple-50 hover:bg-purple-100 text-purple-700 font-medium text-xs transition-all flex items-center gap-1.5"
-                >
-                  <FileText className="w-4 h-4" /> Print Report
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsReportModalOpen(false)}
-                  className="px-5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs shadow-md transition-all"
-                >
-                  Close Modal
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
-};
-
-export default TenantsPage;
+}

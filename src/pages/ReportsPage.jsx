@@ -1,4 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+
 import {
   generateMonthlyReport,
   fetchReports,
@@ -6,1419 +13,1236 @@ import {
   fetchTenantReport,
   fetchShopReport,
   fetchComparisonReport,
+  exportReportPDF,
+  exportReportsExcel,
+  exportTenantExcel,
+  exportShopExcel, 
 } from '../services/reportService';
-import { fetchAgreements } from '../services/agreementService';
+
 import { fetchTenants } from '../services/tenantService';
 import { fetchShops } from '../services/shopService';
+
 import {
   BarChart3,
-  TrendingUp,
-  TrendingDown,
-  DollarSign,
-  Receipt,
-  AlertCircle,
-  X,
-  Download,
-  Filter,
   Calendar,
+  Download,
+  RefreshCw,
+  X,
 } from 'lucide-react';
+
+// ==================== HELPERS ====================
+
+const number = (value) => {
+  const result = Number(value);
+  return Number.isFinite(result) ? result : 0;
+};
+
+const money = (value) =>
+  `PKR ${number(value).toLocaleString('en-PK', {
+    maximumFractionDigits: 2,
+  })}`;
+
+const percentage = (value) => `${number(value).toFixed(2)}%`;
+
+const netAmount = (report) =>
+  number(report?.totalRevenue) - number(report?.totalExpenses);
+
+const formatDate = (value) => {
+  if (!value) return '—';
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime())
+    ? '—'
+    : date.toLocaleDateString('en-GB');
+};
+
+const currentMonth = () => {
+  const date = new Date();
+
+  return `${date.getFullYear()}-${String(
+    date.getMonth() + 1
+  ).padStart(2, '0')}`;
+};
+
+const errorMessage = (error) =>
+  error.response?.data?.message ||
+  error.message ||
+  'Something went wrong';
+
+const validateRange = (start, end, required = false) => {
+  if (required && (!start || !end)) {
+    throw new Error('Please select start and end month');
+  }
+
+  if (start && end && start > end) {
+    throw new Error('Start month cannot be after end month');
+  }
+};
+
+// Ignore responses from old filters or an unmounted component.
+const useRemoteData = (loader, requestKey, enabled = true) => {
+  const [state, setState] = useState({
+    loader: null,
+    requestKey: null,
+    data: null,
+    loading: false,
+    error: '',
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!enabled) return undefined;
+
+    setState({
+      loader,
+      requestKey,
+      data: null,
+      loading: true,
+      error: '',
+    });
+
+    Promise.resolve()
+      .then(loader)
+      .then((data) => {
+        if (cancelled) return;
+
+        setState({
+          loader,
+          requestKey,
+          data,
+          loading: false,
+          error: '',
+        });
+      })
+      .catch((error) => {
+        if (cancelled) return;
+
+        setState({
+          loader,
+          requestKey,
+          data: null,
+          loading: false,
+          error: errorMessage(error),
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loader, requestKey, enabled]);
+
+  if (!enabled) {
+    return { data: null, loading: false, error: '' };
+  }
+
+  if (
+    state.loader !== loader ||
+    state.requestKey !== requestKey
+  ) {
+    return { data: null, loading: true, error: '' };
+  }
+
+  return state;
+};
+
+// ==================== UI COMPONENTS ====================
+
+const inputClass =
+  'w-full px-4 py-2.5 rounded-xl border border-slate-300 bg-white ' +
+  'focus:outline-none focus:ring-2 focus:ring-blue-900 text-sm';
+
+const buttonClass =
+  'inline-flex items-center justify-center gap-2 px-4 py-2.5 ' +
+  'rounded-xl bg-blue-900 text-white text-sm font-medium ' +
+  'hover:bg-blue-800 disabled:opacity-50 disabled:cursor-not-allowed';
+
+const Panel = ({ title, children }) => (
+  <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 md:p-6">
+    {title && (
+      <h3 className="text-lg font-bold text-slate-900 mb-4">
+        {title}
+      </h3>
+    )}
+    {children}
+  </section>
+);
+
+const Field = ({ label, children }) => (
+  <label className="block">
+    <span className="block text-xs font-bold uppercase text-slate-600 mb-2">
+      {label}
+    </span>
+    {children}
+  </label>
+);
+
+const Metric = ({ title, value, tone = 'blue', note }) => {
+  const tones = {
+    blue: 'bg-blue-50 border-blue-200 text-blue-900',
+    orange: 'bg-orange-50 border-orange-200 text-orange-900',
+    green: 'bg-emerald-50 border-emerald-200 text-emerald-900',
+    red: 'bg-rose-50 border-rose-200 text-rose-900',
+    purple: 'bg-purple-50 border-purple-200 text-purple-900',
+  };
+
+  return (
+    <div className={`rounded-xl border p-5 ${tones[tone] || tones.blue}`}>
+      <p className="text-xs font-bold uppercase">{title}</p>
+      <p className="text-2xl font-extrabold mt-2 break-words">{value}</p>
+      {note && <p className="text-xs mt-2">{note}</p>}
+    </div>
+  );
+};
+
+const Badge = ({ status }) => {
+  const positive = ['Paid', 'Profit', 'Active', 'Occupied'].includes(
+    status
+  );
+
+  const negative = ['Unpaid', 'Loss'].includes(status);
+
+  const style = positive
+    ? 'bg-emerald-100 text-emerald-800'
+    : negative
+      ? 'bg-rose-100 text-rose-800'
+      : status === 'Partial'
+        ? 'bg-amber-100 text-amber-800'
+        : 'bg-slate-100 text-slate-700';
+
+  return (
+    <span className={`px-3 py-1 rounded-full text-xs font-semibold ${style}`}>
+      {status || '—'}
+    </span>
+  );
+};
+
+const Row = ({ label, value, strong = false }) => (
+  <div
+    className={`flex justify-between gap-4 py-2 ${
+      strong ? 'border-t border-slate-200 font-bold' : ''
+    }`}
+  >
+    <span className="text-slate-600">{label}</span>
+    <span className="text-right text-slate-900">{value}</span>
+  </div>
+);
+
+const DataTable = ({ columns, rows, rowKey, emptyText = 'No records found.' }) => (
+  <div className="overflow-x-auto rounded-xl border border-slate-200">
+    <table className="w-full text-left text-sm">
+      <thead className="bg-slate-900 text-white">
+        <tr>
+          {columns.map((column) => (
+            <th key={column.key} className="px-4 py-3 whitespace-nowrap">
+              {column.label}
+            </th>
+          ))}
+        </tr>
+      </thead>
+
+      <tbody className="divide-y divide-slate-100 bg-white">
+        {rows.length === 0 ? (
+          <tr>
+            <td
+              colSpan={columns.length}
+              className="text-center px-4 py-8 text-slate-500"
+            >
+              {emptyText}
+            </td>
+          </tr>
+        ) : (
+          rows.map((row, index) => (
+            <tr
+              key={rowKey ? rowKey(row, index) : index}
+              className="hover:bg-slate-50"
+            >
+              {columns.map((column) => (
+                <td key={column.key} className="px-4 py-3">
+                  {column.render
+                    ? column.render(row)
+                    : row[column.key] ?? '—'}
+                </td>
+              ))}
+            </tr>
+          ))
+        )}
+      </tbody>
+    </table>
+  </div>
+);
+
+const MonthRange = ({ start, end, onStart, onEnd }) => (
+  <>
+    <Field label="Start month">
+      <input
+        type="month"
+        value={start}
+        onChange={(event) => onStart(event.target.value)}
+        className={inputClass}
+      />
+    </Field>
+
+    <Field label="End month">
+      <input
+        type="month"
+        value={end}
+        onChange={(event) => onEnd(event.target.value)}
+        className={inputClass}
+      />
+    </Field>
+  </>
+);
+
+const ReportDetails = ({ report }) => {
+  const net = netAmount(report);
+
+  const previousBalanceCollected =
+    Math.round(
+      (
+        number(report.totalRevenue) -
+        number(report.totalRentCollected) -
+        number(report.totalUtilitiesCollected) -
+        number(report.totalLateFines)
+      ) * 100
+    ) / 100;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div>
+          <h4 className="font-bold text-slate-900 mb-2">
+            Revenue Breakdown
+          </h4>
+
+          <Row label="Rent collected" value={money(report.totalRentCollected)} />
+          <Row label="Utilities" value={money(report.totalUtilitiesCollected)} />
+          <Row label="Late fines" value={money(report.totalLateFines)} />
+
+          {previousBalanceCollected > 0.01 && (
+            <Row
+              label="Previous balance collected"
+              value={money(previousBalanceCollected)}
+            />
+          )}
+
+          <Row label="Total revenue" value={money(report.totalRevenue)} strong />
+        </div>
+
+        <div>
+          <h4 className="font-bold text-slate-900 mb-2">
+            Invoice Status
+          </h4>
+
+          <Row label="Total invoices" value={number(report.totalInvoicesGenerated)} />
+          <Row label="Paid" value={number(report.invoicesPaid)} />
+          <Row label="Partial" value={number(report.invoicesPartial)} />
+          <Row label="Unpaid" value={number(report.invoicesUnpaid)} />
+          <Row label="Outstanding" value={money(report.totalOutstanding)} strong />
+        </div>
+
+        <div>
+          <h4 className="font-bold text-slate-900 mb-2">
+            Profit & Loss
+          </h4>
+
+          <Row label="Total expenses" value={money(report.totalExpenses)} />
+
+          <Row
+            label={net < 0 ? 'Net loss' : net > 0 ? 'Net profit' : 'Break even'}
+            value={money(Math.abs(net))}
+            strong
+          />
+
+          <Row label="Margin" value={percentage(report.profitMargin)} />
+          <Row label="Collection rate" value={percentage(report.collectionRate)} />
+
+          <Badge status={net < 0 ? 'Loss' : net > 0 ? 'Profit' : 'Break Even'} />
+        </div>
+      </div>
+
+      <div>
+        <h4 className="font-bold text-slate-900 mb-3">
+          Expenses by Category
+        </h4>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8">
+          {Object.entries(report.expensesByCategory || {}).map(
+            ([category, amount]) => (
+              <Row key={category} label={category} value={money(amount)} />
+            )
+          )}
+        </div>
+
+        <Row label="Total expenses" value={money(report.totalExpenses)} strong />
+      </div>
+    </div>
+  );
+};
+
+// ==================== PAGE ====================
 
 const ReportsPage = () => {
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [reports, setReports] = useState([]);
-  const [selectedReport, setSelectedReport] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState('');
-  const [successMsg, setSuccessMsg] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  // Filters
-  const [filterMonth, setFilterMonth] = useState('');
+  // Separate dashboard selection from the month used for generation.
+  const [dashboardMonth, setDashboardMonth] = useState('latest');
+  const [generateMonth, setGenerateMonth] = useState(currentMonth);
+
   const [startMonth, setStartMonth] = useState('');
   const [endMonth, setEndMonth] = useState('');
 
-  // Export states
-  const [exportLoading, setExportLoading] = useState(false);
-  const [exportError, setExportError] = useState('');
-
-  // Dropdowns for detailed reports
-  const [agreements, setAgreements] = useState([]);
-  const [tenants, setTenants] = useState([]);
-  const [shops, setShops] = useState([]);
   const [selectedTenant, setSelectedTenant] = useState('');
   const [selectedShop, setSelectedShop] = useState('');
-  const [tenantReport, setTenantReport] = useState(null);
-  const [shopReport, setShopReport] = useState(null);
-  const [comparisonReport, setComparisonReport] = useState(null);
+  const [detailsMonth, setDetailsMonth] = useState('');
 
-  // Load initial data
-  useEffect(() => {
-    loadReports();
-    loadDropdownData();
+  const [generating, setGenerating] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
+
+  const generateLock = useRef(false);
+  const exportLock = useRef(false);
+
+  const refresh = useCallback(() => {
+    setRefreshKey((value) => value + 1);
   }, []);
 
-  const loadReports = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const res = await fetchReports(startMonth, endMonth);
-      setReports(res.data || []);
-    } catch (err) {
-      setError('Failed to load reports');
-      console.error(err);
-    }
-    setLoading(false);
-  };
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') refresh();
+    };
 
-  const loadDropdownData = async () => {
-    try {
-      const [agrRes, tenRes, shopRes] = await Promise.all([
-        fetchAgreements(),
-        fetchTenants(),
-        fetchShops(),
-      ]);
-      setAgreements(agrRes.data || []);
-      setTenants(tenRes.data || []);
-      setShops(shopRes.data || []);
-    } catch (err) {
-      console.error('Failed to load dropdown data:', err);
-    }
-  };
+    window.addEventListener('focus', refresh);
+    window.addEventListener('plaza-finances-updated', refresh);
+    document.addEventListener('visibilitychange', onVisible);
 
-  const handleGenerateReport = async () => {
-    if (!filterMonth) {
+    return () => {
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('plaza-finances-updated', refresh);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [refresh]);
+
+  useEffect(() => {
+    if (!detailsMonth) return undefined;
+
+    const onEscape = (event) => {
+      if (event.key === 'Escape') setDetailsMonth('');
+    };
+
+    window.addEventListener('keydown', onEscape);
+
+    return () => window.removeEventListener('keydown', onEscape);
+  }, [detailsMonth]);
+
+  const loadReports = useCallback(async () => {
+    const response = await fetchReports();
+
+    return [...(response.data || [])].sort((a, b) =>
+      String(b.monthYear).localeCompare(String(a.monthYear))
+    );
+  }, []);
+
+  const loadTenants = useCallback(async () => {
+    const response = await fetchTenants();
+    return response.data || [];
+  }, []);
+
+  const loadShops = useCallback(async () => {
+    const response = await fetchShops();
+    return response.data || [];
+  }, []);
+
+  const loadTenantReport = useCallback(async () => {
+    validateRange(startMonth, endMonth);
+
+    const response = await fetchTenantReport(
+      selectedTenant,
+      startMonth,
+      endMonth
+    );
+
+    return response.data;
+  }, [selectedTenant, startMonth, endMonth]);
+
+  const loadShopReport = useCallback(async () => {
+    validateRange(startMonth, endMonth);
+
+    const response = await fetchShopReport(
+      selectedShop,
+      startMonth,
+      endMonth
+    );
+
+    return response.data;
+  }, [selectedShop, startMonth, endMonth]);
+
+  const loadComparison = useCallback(async () => {
+    validateRange(startMonth, endMonth, true);
+
+    const response = await fetchComparisonReport(startMonth, endMonth);
+    return response.data;
+  }, [startMonth, endMonth]);
+
+  const loadDetails = useCallback(async () => {
+    const response = await fetchMonthReport(detailsMonth);
+    return response.data;
+  }, [detailsMonth]);
+
+  const reportsState = useRemoteData(
+    loadReports,
+    `${refreshKey}:${activeTab}:${dashboardMonth}`
+  );
+
+  const tenantsState = useRemoteData(
+    loadTenants,
+    refreshKey,
+    activeTab === 'tenant'
+  );
+
+  const shopsState = useRemoteData(
+    loadShops,
+    refreshKey,
+    activeTab === 'shop'
+  );
+
+  const tenantState = useRemoteData(
+    loadTenantReport,
+    refreshKey,
+    activeTab === 'tenant' && Boolean(selectedTenant)
+  );
+
+  const shopState = useRemoteData(
+    loadShopReport,
+    refreshKey,
+    activeTab === 'shop' && Boolean(selectedShop)
+  );
+
+  const comparisonState = useRemoteData(
+    loadComparison,
+    refreshKey,
+    activeTab === 'comparison' && Boolean(startMonth && endMonth)
+  );
+
+  const detailsState = useRemoteData(
+    loadDetails,
+    refreshKey,
+    Boolean(detailsMonth)
+  );
+
+  const reports = reportsState.data || [];
+  const tenants = tenantsState.data || [];
+  const shops = shopsState.data || [];
+
+  const tenantReport = tenantState.data;
+  const shopReport = shopState.data;
+  const comparisonReport = comparisonState.data;
+
+  const visibleReports = useMemo(
+    () =>
+      reports.filter(
+        (report) =>
+          (!startMonth || report.monthYear >= startMonth) &&
+          (!endMonth || report.monthYear <= endMonth)
+      ),
+    [reports, startMonth, endMonth]
+  );
+
+  const dashboardReports =
+    dashboardMonth === 'all'
+      ? reports
+      : dashboardMonth === 'latest'
+        ? reports.slice(0, 1)
+        : reports.filter((report) => report.monthYear === dashboardMonth);
+
+  const dashboardReport = dashboardReports[0];
+
+  const revenue = dashboardReports.reduce(
+    (sum, report) => sum + number(report.totalRevenue),
+    0
+  );
+
+  const expenses = dashboardReports.reduce(
+    (sum, report) => sum + number(report.totalExpenses),
+    0
+  );
+
+  const profit = revenue - expenses;
+
+  const averageCollection = dashboardReports.length
+    ? dashboardReports.reduce(
+        (sum, report) => sum + number(report.collectionRate),
+        0
+      ) / dashboardReports.length
+    : 0;
+
+  const rangeInvalid =
+    Boolean(startMonth && endMonth) && startMonth > endMonth;
+
+  const resourceError =
+    reportsState.error ||
+    tenantsState.error ||
+    shopsState.error ||
+    tenantState.error ||
+    shopState.error ||
+    comparisonState.error ||
+    detailsState.error;
+
+  const activeLoading =
+    reportsState.loading ||
+    tenantState.loading ||
+    shopState.loading ||
+    comparisonState.loading;
+
+  const handleGenerate = async () => {
+    if (generateLock.current) return;
+
+    if (!generateMonth) {
       setError('Please select a month');
       return;
     }
 
-    setLoading(true);
+    generateLock.current = true;
+    setGenerating(true);
     setError('');
-    setSuccessMsg('');
+    setSuccess('');
 
     try {
-      const res = await generateMonthlyReport(filterMonth);
-      setSuccessMsg(res.message || 'Report generated successfully!');
-      loadReports();
-      setTimeout(() => setSuccessMsg(''), 3000);
-    } catch (err) {
-      setError(err.response?.data?.message || 'Error generating report');
+      const response = await generateMonthlyReport(generateMonth);
+
+      setSuccess(response.message || 'Monthly report updated.');
+      refresh();
+    } catch (requestError) {
+      setError(errorMessage(requestError));
+    } finally {
+      generateLock.current = false;
+      setGenerating(false);
     }
-    setLoading(false);
   };
 
-  const handleTenantReport = async () => {
-    if (!selectedTenant || !startMonth || !endMonth) {
-      setError('Please select tenant and date range');
-      return;
-    }
+  const handleExport = async (action) => {
+    if (exportLock.current) return;
 
-    setLoading(true);
+    exportLock.current = true;
+    setExporting(true);
     setError('');
+    setSuccess('');
 
     try {
-      const res = await fetchTenantReport(selectedTenant, startMonth, endMonth);
-      setTenantReport(res.data);
-    } catch (err) {
-      setError(err.response?.data?.message || 'Failed to load tenant report');
-    }
-    setLoading(false);
-  };
-
-  const handleShopReport = async () => {
-    if (!selectedShop || !startMonth || !endMonth) {
-      setError('Please select shop and date range');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-
-    try {
-      const res = await fetchShopReport(selectedShop, startMonth, endMonth);
-      setShopReport(res.data);
-    } catch (err) {
-      setError(err.response?.data?.message || 'Failed to load shop report');
-    }
-    setLoading(false);
-  };
-
-  const handleComparisonReport = async () => {
-    if (!startMonth || !endMonth) {
-      setError('Please select date range');
-      return;
-    }
-
-    setLoading(true);
-    setError('');
-
-    try {
-      const res = await fetchComparisonReport(startMonth, endMonth);
-      setComparisonReport(res.data);
-    } catch (err) {
-      setError(err.response?.data?.message || 'Failed to load comparison report');
-    }
-    setLoading(false);
-  };
-
-  // ===== EXPORT FUNCTIONS =====
-
-  const handleExportReportPDF = (monthYear) => {
-    if (!monthYear) {
-      setError('Please select a report first');
-      return;
-    }
-    setExportLoading(true);
-    try {
-      window.open(`/api/exports/report/pdf/${monthYear}`, '_blank');
-      setSuccessMsg('📥 PDF downloaded successfully!');
-      setTimeout(() => setSuccessMsg(''), 3000);
-    } catch (err) {
-      setError('Failed to download PDF');
+      await action();
+      setSuccess('Download started.');
+    } catch (requestError) {
+      setError(errorMessage(requestError));
     } finally {
-      setExportLoading(false);
+      exportLock.current = false;
+      setExporting(false);
     }
   };
 
-  const handleExportAllReportsExcel = () => {
-    if (reports.length === 0) {
-      setError('No reports available to export');
+  const exportPDF = (month) => {
+    if (!month) return;
+    handleExport(() => exportReportPDF(month));
+  };
+
+  const exportExcel = (start, end) => {
+    if (start && end && start > end) {
+      setError('Start month cannot be after end month');
       return;
     }
-    setExportLoading(true);
-    try {
-      window.open(`/api/exports/reports/excel`, '_blank');
-      setSuccessMsg('📥 Excel file downloaded successfully!');
-      setTimeout(() => setSuccessMsg(''), 3000);
-    } catch (err) {
-      setError('Failed to download Excel');
-    } finally {
-      setExportLoading(false);
-    }
+
+    handleExport(() => exportReportsExcel(start, end));
   };
 
-  const handleExportInvoicePDF = (invoiceId, invoiceNumber) => {
-    if (!invoiceId) {
-      setError('Invoice ID is missing');
-      return;
-    }
-    setExportLoading(true);
-    try {
-      window.open(`/api/exports/invoice/pdf/${invoiceId}`, '_blank');
-      setSuccessMsg(`📥 Invoice ${invoiceNumber} downloaded!`);
-      setTimeout(() => setSuccessMsg(''), 3000);
-    } catch (err) {
-      setError('Failed to download invoice');
-    } finally {
-      setExportLoading(false);
-    }
-  };
+  const monthlyColumns = [
+    { key: 'monthYear', label: 'Month' },
+    {
+      key: 'revenue',
+      label: 'Revenue',
+      render: (row) => money(row.totalRevenue),
+    },
+    {
+      key: 'expenses',
+      label: 'Expenses',
+      render: (row) => money(row.totalExpenses),
+    },
+    {
+      key: 'net',
+      label: 'Net Profit / Loss',
+      render: (row) => (
+        <span className={netAmount(row) < 0 ? 'text-rose-600 font-bold' : 'text-emerald-700 font-bold'}>
+          {money(netAmount(row))}
+        </span>
+      ),
+    },
+    {
+      key: 'margin',
+      label: 'Margin',
+      render: (row) => percentage(row.profitMargin),
+    },
+    {
+      key: 'collection',
+      label: 'Collection',
+      render: (row) => percentage(row.collectionRate),
+    },
+    {
+      key: 'actions',
+      label: 'Actions',
+      render: (row) => (
+        <div className="flex gap-3">
+          <button
+            onClick={() => setDetailsMonth(row.monthYear)}
+            className="text-blue-700 font-semibold"
+          >
+            View
+          </button>
 
-  const handleExportTenantExcel = (tenantId) => {
-    if (!tenantId) {
-      setError('Please select a tenant first');
-      return;
-    }
-    setExportLoading(true);
-    try {
-      window.open(`/api/exports/tenant/excel/${tenantId}`, '_blank');
-      setSuccessMsg('📥 Tenant report exported!');
-      setTimeout(() => setSuccessMsg(''), 3000);
-    } catch (err) {
-      setError('Failed to download tenant report');
-    } finally {
-      setExportLoading(false);
-    }
-  };
-
-  const getDashboardMetrics = () => {
-    if (reports.length === 0) return null;
-
-    let selectedReport = null;
-    
-    if (filterMonth) {
-      selectedReport = reports.find(r => r.monthYear === filterMonth);
-    } else {
-      selectedReport = reports[0];
-    }
-
-    if (!selectedReport) return null;
-
-    const totalRevenue = reports.reduce((sum, r) => sum + r.totalRevenue, 0);
-    const totalExpenses = reports.reduce((sum, r) => sum + r.totalExpenses, 0);
-    const totalProfit = reports.reduce(
-      (sum, r) => sum + (r.netProfit > 0 ? r.netProfit : 0),
-      0
-    );
-    const avgCollectionRate = (
-      reports.reduce((sum, r) => sum + parseFloat(r.collectionRate), 0) /
-      reports.length
-    ).toFixed(2);
-
-    return {
-      latestReport: selectedReport,
-      totalRevenue,
-      totalExpenses,
-      totalProfit,
-      avgCollectionRate,
-    };
-  };
-
-  const metrics = getDashboardMetrics();
+          <button
+            onClick={() => exportPDF(row.monthYear)}
+            disabled={exporting}
+            className="text-rose-600 font-semibold disabled:opacity-50"
+          >
+            PDF
+          </button>
+        </div>
+      ),
+    },
+  ];
 
   return (
-    <div className="p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-extrabold text-slate-900 tracking-tight flex items-center gap-3 mb-2">
-          <BarChart3 className="w-8 h-8 text-blue-900" />
-          Financial Reports & Analytics
-        </h1>
-        <p className="text-slate-500 text-sm">
-          Comprehensive profit/loss analysis, tenant payment tracking, and shop-wise revenue reports
-        </p>
-      </div>
-
-      {/* Alerts */}
-      {error && (
-        <div className="bg-red-50 border-l-4 border-red-500 text-red-700 p-4 mb-6 rounded-r-xl flex justify-between items-center">
-          <span>{error}</span>
-          <button onClick={() => setError('')} className="text-red-600 hover:text-red-800">
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-      )}
-      {successMsg && (
-        <div className="bg-emerald-50 border-l-4 border-emerald-500 text-emerald-700 p-4 mb-6 rounded-r-xl flex justify-between items-center">
-          <span>{successMsg}</span>
-          <button
-            onClick={() => setSuccessMsg('')}
-            className="text-emerald-600 hover:text-emerald-800"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-      )}
-
-      {/* Tabs Navigation */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 mb-6 overflow-hidden">
-        <div className="flex gap-0 overflow-x-auto">
-          {[
-            { id: 'dashboard', label: '📊 Dashboard', icon: <BarChart3 className="w-4 h-4" /> },
-            { id: 'monthly', label: '📅 Monthly Reports', icon: <Calendar className="w-4 h-4" /> },
-            {
-              id: 'tenant',
-              label: '👤 Tenant-wise',
-              icon: <Receipt className="w-4 h-4" />,
-            },
-            { id: 'shop', label: '🏪 Shop-wise', icon: <DollarSign className="w-4 h-4" /> },
-            {
-              id: 'comparison',
-              label: '📈 Comparison',
-              icon: <TrendingUp className="w-4 h-4" />,
-            },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`px-6 py-3 font-medium text-sm border-b-2 transition-all whitespace-nowrap flex items-center gap-2 ${
-                activeTab === tab.id
-                  ? 'border-blue-900 text-blue-900 bg-blue-50'
-                  : 'border-transparent text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              {tab.icon} {tab.label}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* TAB 1: DASHBOARD */}
-      {activeTab === 'dashboard' && (
+    <div className="p-4 md:p-8 max-w-7xl mx-auto bg-gray-50 min-h-screen space-y-6">
+      <header className="flex flex-wrap justify-between items-center gap-4">
         <div>
-          {/* Month Filter Section */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">📅 Select Month to View</h3>
+          <h1 className="text-2xl md:text-3xl font-extrabold text-slate-900 flex items-center gap-3">
+            <BarChart3 className="w-8 h-8 text-blue-900" />
+            Financial Reports & Analytics
+          </h1>
+
+          <p className="text-slate-500 text-sm mt-2">
+            Monthly collections, expenses, tenant payments and shop reports.
+          </p>
+        </div>
+
+        <button
+          onClick={refresh}
+          disabled={activeLoading}
+          className={buttonClass}
+        >
+          <RefreshCw className={`w-4 h-4 ${activeLoading ? 'animate-spin' : ''}`} />
+          {activeLoading ? 'Refreshing...' : 'Refresh'}
+        </button>
+      </header>
+
+      {(error || resourceError) && (
+        <div role="alert" className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-xl">
+          {error || resourceError}
+        </div>
+      )}
+
+      {success && (
+        <div role="status" className="bg-emerald-50 border border-emerald-200 text-emerald-700 p-4 rounded-xl flex justify-between gap-4">
+          <span>{success}</span>
+          <button onClick={() => setSuccess('')} aria-label="Dismiss message">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      )}
+
+      <nav className="flex overflow-x-auto bg-white rounded-xl border border-slate-200">
+        {[
+          ['dashboard', 'Dashboard'],
+          ['monthly', 'Monthly Reports'],
+          ['tenant', 'Tenant-wise'],
+          ['shop', 'Shop-wise'],
+          ['comparison', 'Comparison'],
+        ].map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => {
+              setActiveTab(id);
+              setError('');
+              setSuccess('');
+            }}
+            className={`px-5 py-4 whitespace-nowrap text-sm font-semibold border-b-2 ${
+              activeTab === id
+                ? 'border-blue-900 text-blue-900 bg-blue-50'
+                : 'border-transparent text-slate-500'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {/* ==================== DASHBOARD ==================== */}
+
+      {activeTab === 'dashboard' && (
+        <div className="space-y-6">
+          <Panel title="Select Month">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-              <div>
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-2">
-                  View Report For
-                </label>
+              <Field label="View report for">
                 <select
-                  value={filterMonth}
-                  onChange={(e) => setFilterMonth(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900 bg-white"
+                  value={dashboardMonth}
+                  onChange={(event) => setDashboardMonth(event.target.value)}
+                  className={inputClass}
                 >
-                  <option value="">📌 Latest Month</option>
+                  <option value="latest">Latest Month</option>
+                  <option value="all">All Months</option>
+
                   {reports.map((report) => (
-                    <option key={report._id} value={report.monthYear}>
-                      📅 {report.monthYear}
+                    <option key={report.monthYear} value={report.monthYear}>
+                      {report.monthYear}
                     </option>
                   ))}
                 </select>
-              </div>
-              <div className="col-span-2">
-                <div className="px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl">
-                  <p className="text-xs font-semibold text-blue-700">
-                    {filterMonth
-                      ? `📊 Viewing: ${filterMonth}`
-                      : `📊 Viewing: Latest Report (${reports[0]?.monthYear || 'No data available'})`}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
+              </Field>
 
-          {/* Export Section */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">📥 Export Reports</h3>
-            <div className="flex flex-wrap gap-3">
               <button
-                onClick={() => handleExportReportPDF(filterMonth || reports[0]?.monthYear)}
-                disabled={exportLoading || reports.length === 0}
-                className="px-6 py-2.5 bg-red-600 hover:bg-red-700 disabled:bg-slate-300 text-white rounded-xl font-medium transition-all flex items-center gap-2"
+                className={buttonClass}
+                onClick={() => exportPDF(dashboardReport?.monthYear)}
+                disabled={exporting || !dashboardReport || dashboardMonth === 'all'}
               >
                 <Download className="w-4 h-4" />
-                {exportLoading ? 'Exporting...' : 'PDF Report'}
+                Month PDF
               </button>
+
               <button
-                onClick={handleExportAllReportsExcel}
-                disabled={exportLoading || reports.length === 0}
-                className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-xl font-medium transition-all flex items-center gap-2"
+                className={buttonClass}
+                disabled={exporting || !dashboardReports.length}
+                onClick={() =>
+                  dashboardMonth === 'all'
+                    ? exportExcel()
+                    : exportExcel(
+                        dashboardReport?.monthYear,
+                        dashboardReport?.monthYear
+                      )
+                }
               >
                 <Download className="w-4 h-4" />
-                {exportLoading ? 'Exporting...' : 'All Reports (Excel)'}
+                {dashboardMonth === 'all' ? 'All Months Excel' : 'Month Excel'}
               </button>
             </div>
-          </div>
+          </Panel>
 
-          {metrics && (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-              {/* Total Revenue */}
-              <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-2xl p-6 text-white shadow-lg">
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <p className="text-blue-100 text-sm font-medium">Total Revenue</p>
-                    <h3 className="text-3xl font-bold mt-1">
-                      PKR {(metrics.totalRevenue / 1000).toFixed(1)}K
-                    </h3>
-                  </div>
-                  <TrendingUp className="w-8 h-8 text-blue-200" />
-                </div>
-                <p className="text-blue-100 text-xs">
-                  {reports.length} months tracked
-                </p>
-              </div>
-
-              {/* Total Expenses */}
-              <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-2xl p-6 text-white shadow-lg">
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <p className="text-orange-100 text-sm font-medium">Total Expenses</p>
-                    <h3 className="text-3xl font-bold mt-1">
-                      PKR {(metrics.totalExpenses / 1000).toFixed(1)}K
-                    </h3>
-                  </div>
-                  <AlertCircle className="w-8 h-8 text-orange-200" />
-                </div>
-                <p className="text-orange-100 text-xs">Maintenance, utilities & salaries</p>
-              </div>
-
-              {/* Total Profit */}
-              <div className="bg-gradient-to-br from-emerald-500 to-emerald-600 rounded-2xl p-6 text-white shadow-lg">
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <p className="text-emerald-100 text-sm font-medium">Net Profit</p>
-                    <h3 className="text-3xl font-bold mt-1">
-                      PKR {(metrics.totalProfit / 1000).toFixed(1)}K
-                    </h3>
-                  </div>
-                  <DollarSign className="w-8 h-8 text-emerald-200" />
-                </div>
-                <p className="text-emerald-100 text-xs">
-                  {((metrics.totalProfit / metrics.totalRevenue) * 100).toFixed(1)}% margin
-                </p>
-              </div>
-
-              {/* Collection Rate */}
-              <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-2xl p-6 text-white shadow-lg">
-                <div className="flex justify-between items-start mb-4">
-                  <div>
-                    <p className="text-purple-100 text-sm font-medium">Avg Collection Rate</p>
-                    <h3 className="text-3xl font-bold mt-1">{metrics.avgCollectionRate}%</h3>
-                  </div>
-                  <Receipt className="w-8 h-8 text-purple-200" />
-                </div>
-                <p className="text-purple-100 text-xs">Payment discipline</p>
-              </div>
-            </div>
-          )}
-
-          {/* Latest Month Summary */}
-          {metrics && metrics.latestReport && (
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-              <h3 className="text-lg font-bold text-slate-900 mb-6">
-                {filterMonth 
-                  ? `📊 Details: ${metrics.latestReport.monthYear}` 
-                  : `📊 Latest Month: ${metrics.latestReport.monthYear}`}
-              </h3>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {/* Revenue Breakdown */}
-                <div className="space-y-3">
-                  <h4 className="font-semibold text-slate-800 text-sm uppercase text-slate-500">
-                    Revenue Breakdown
-                  </h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-slate-600">Rent Collected</span>
-                      <span className="font-semibold text-slate-900">
-                        PKR {metrics.latestReport.totalRentCollected.toLocaleString()}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-600">Utilities</span>
-                      <span className="font-semibold text-slate-900">
-                        PKR {metrics.latestReport.totalUtilitiesCollected.toLocaleString()}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-slate-600">Late Fines</span>
-                      <span className="font-semibold text-rose-600">
-                        PKR {metrics.latestReport.totalLateFines.toLocaleString()}
-                      </span>
-                    </div>
-                    <div className="border-t border-slate-200 pt-2 mt-2 flex justify-between">
-                      <span className="font-semibold text-slate-900">Total Revenue</span>
-                      <span className="font-bold text-blue-600 text-base">
-                        PKR {metrics.latestReport.totalRevenue.toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Invoice Status */}
-                <div className="space-y-3">
-                  <h4 className="font-semibold text-slate-800 text-sm uppercase text-slate-500">
-                    Invoice Status
-                  </h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-emerald-600">✓ Paid</span>
-                      <span className="font-semibold text-emerald-900">
-                        {metrics.latestReport.invoicesPaid}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-rose-600">✗ Unpaid</span>
-                      <span className="font-semibold text-rose-900">
-                        {metrics.latestReport.invoicesUnpaid}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-amber-600">⊕ Partial</span>
-                      <span className="font-semibold text-amber-900">
-                        {metrics.latestReport.invoicesPartial}
-                      </span>
-                    </div>
-                    <div className="border-t border-slate-200 pt-2 mt-2">
-                      <div className="flex justify-between mb-1">
-                        <span className="text-slate-600 text-xs">Outstanding</span>
-                        <span className="font-bold text-rose-600">
-                          PKR {metrics.latestReport.totalOutstanding.toLocaleString()}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Profit & Loss */}
-                <div className="space-y-3">
-                  <h4 className="font-semibold text-slate-800 text-sm uppercase text-slate-500">
-                    Profit & Loss
-                  </h4>
-                  <div className="space-y-2 text-sm">
-                    <div className="flex justify-between">
-                      <span className="text-slate-600">Total Expenses</span>
-                      <span className="font-semibold text-slate-900">
-                        PKR {metrics.latestReport.totalExpenses.toLocaleString()}
-                      </span>
-                    </div>
-                    <div
-                      className={`border-t border-slate-200 pt-2 mt-2 flex justify-between ${
-                        metrics.latestReport.netProfit > 0
-                          ? 'text-emerald-600'
-                          : 'text-rose-600'
-                      }`}
-                    >
-                      <span className="font-semibold">
-                        {metrics.latestReport.netProfit > 0 ? 'Net Profit' : 'Net Loss'}
-                      </span>
-                      <span className="font-bold text-base">
-                        PKR {Math.abs(metrics.latestReport.netProfit).toLocaleString()}
-                      </span>
-                    </div>
-                    <div className="flex justify-between text-xs text-slate-500">
-                      <span>Margin</span>
-                      <span>{metrics.latestReport.profitMargin}%</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* TAB 2: MONTHLY REPORTS */}
-      {activeTab === 'monthly' && (
-        <div>
-          {/* Generate & Filter Section */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">Generate Monthly Report</h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-              <div>
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-2">
-                  Select Month & Year
-                </label>
-                <input
-                  type="month"
-                  value={filterMonth}
-                  onChange={(e) => setFilterMonth(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900"
+          {reportsState.loading ? (
+            <Panel>Loading current report data...</Panel>
+          ) : dashboardReports.length === 0 ? (
+            <Panel>No report data available for this selection.</Panel>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <Metric
+                  title="Total Revenue"
+                  value={money(revenue)}
+                  note={`${dashboardReports.length} month(s) included`}
+                />
+                <Metric title="Total Expenses" value={money(expenses)} tone="orange" />
+                <Metric
+                  title="Net Profit / Loss"
+                  value={money(profit)}
+                  tone={profit < 0 ? 'red' : 'green'}
+                  note={`${percentage(revenue > 0 ? (profit / revenue) * 100 : 0)} margin`}
+                />
+                <Metric
+                  title="Avg Collection Rate"
+                  value={percentage(averageCollection)}
+                  tone="purple"
                 />
               </div>
 
-              <button
-                onClick={handleGenerateReport}
-                disabled={loading || !filterMonth}
-                className="px-6 py-2.5 bg-blue-900 hover:bg-blue-800 disabled:bg-slate-300 text-white rounded-xl font-medium transition-all"
+              <Panel
+                title={
+                  dashboardMonth === 'all'
+                    ? `Latest Month Details: ${dashboardReport.monthYear}`
+                    : `Month Details: ${dashboardReport.monthYear}`
+                }
               >
-                {loading ? 'Generating...' : 'Generate Report'}
-              </button>
-            </div>
-          </div>
-
-          {/* Export Options Section */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">📥 Export Options</h3>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <button
-                onClick={handleExportAllReportsExcel}
-                disabled={exportLoading || reports.length === 0}
-                className="px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 hover:from-green-700 hover:to-green-800 disabled:from-slate-400 disabled:to-slate-400 text-white rounded-lg font-semibold flex items-center justify-center gap-2 transition-all shadow-md hover:shadow-lg"
-              >
-                <Download className="w-5 h-5" />
-                {exportLoading ? 'Downloading...' : 'Export All Reports (Excel)'}
-              </button>
-
-              <button
-                onClick={() => {
-                  if (!selectedReport) {
-                    setError('Please select a report first from the table');
-                    return;
-                  }
-                  handleExportReportPDF(selectedReport.monthYear);
-                }}
-                disabled={exportLoading || !selectedReport}
-                className="px-6 py-3 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 disabled:from-slate-400 disabled:to-slate-400 text-white rounded-lg font-semibold flex items-center justify-center gap-2 transition-all shadow-md hover:shadow-lg"
-              >
-                <Download className="w-5 h-5" />
-                {exportLoading ? 'Downloading...' : 'Export Selected Report (PDF)'}
-              </button>
-            </div>
-          </div>
-
-          {/* Monthly Reports Table */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-sm">
-                <thead>
-                  <tr className="bg-slate-900 text-white text-xs uppercase tracking-wider">
-                    <th className="py-4 px-6 font-semibold">Month</th>
-                    <th className="py-4 px-6 font-semibold text-right">Total Revenue</th>
-                    <th className="py-4 px-6 font-semibold text-right">Total Expenses</th>
-                    <th className="py-4 px-6 font-semibold text-right">Net Profit/Loss</th>
-                    <th className="py-4 px-6 font-semibold text-center">Profit Margin</th>
-                    <th className="py-4 px-6 font-semibold text-center">Collection Rate</th>
-                    <th className="py-4 px-6 font-semibold text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 text-slate-700">
-                  {reports.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="text-center py-8 text-slate-400">
-                        No reports generated yet. Generate one above.
-                      </td>
-                    </tr>
-                  ) : (
-                    reports.map((report) => (
-                      <tr key={report._id} className="hover:bg-slate-50/80 transition-colors">
-                        <td className="py-4 px-6 font-semibold text-slate-900">
-                          {report.monthYear}
-                        </td>
-                        <td className="py-4 px-6 text-right font-semibold text-blue-600">
-                          PKR {report.totalRevenue.toLocaleString()}
-                        </td>
-                        <td className="py-4 px-6 text-right font-semibold text-orange-600">
-                          PKR {report.totalExpenses.toLocaleString()}
-                        </td>
-                        <td className="py-4 px-6 text-right">
-                          <span
-                            className={`font-bold ${
-                              report.netProfit > 0
-                                ? 'text-emerald-600'
-                                : report.netProfit < 0
-                                ? 'text-rose-600'
-                                : 'text-slate-600'
-                            }`}
-                          >
-                            PKR {Math.abs(report.netProfit || report.netLoss || 0).toLocaleString()}
-                          </span>
-                        </td>
-                        <td className="py-4 px-6 text-center font-semibold text-slate-900">
-                          {report.profitMargin}%
-                        </td>
-                        <td className="py-4 px-6 text-center font-semibold text-slate-900">
-                          {report.collectionRate}%
-                        </td>
-                        <td className="py-4 px-6 text-center space-x-2 flex justify-center">
-                          <button
-                            onClick={() => setSelectedReport(report)}
-                            className="text-blue-600 hover:text-blue-800 font-medium text-xs hover:underline"
-                            title="View details in modal"
-                          >
-                            View
-                          </button>
-                          <button
-                            onClick={() => handleExportReportPDF(report.monthYear)}
-                            disabled={exportLoading}
-                            className="text-red-600 hover:text-red-800 font-medium text-xs hover:underline disabled:text-slate-400"
-                            title="Download as PDF"
-                          >
-                            PDF
-                          </button>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                <ReportDetails report={dashboardReport} />
+              </Panel>
+            </>
+          )}
         </div>
       )}
 
-      {/* TAB 3: TENANT-WISE REPORT */}
-      {activeTab === 'tenant' && (
-        <div>
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">Tenant Payment History</h3>
+      {/* ==================== MONTHLY ==================== */}
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-              <div>
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-2">
-                  Select Tenant
-                </label>
+      {activeTab === 'monthly' && (
+        <div className="space-y-6">
+          <Panel title="Generate or Update Monthly Report">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+              <Field label="Month">
+                <input
+                  type="month"
+                  value={generateMonth}
+                  onChange={(event) => setGenerateMonth(event.target.value)}
+                  className={inputClass}
+                />
+              </Field>
+
+              <button
+                onClick={handleGenerate}
+                disabled={generating || !generateMonth}
+                className={buttonClass}
+              >
+                <Calendar className="w-4 h-4" />
+                {generating ? 'Updating...' : 'Generate / Update'}
+              </button>
+            </div>
+          </Panel>
+
+          <Panel title="Filter Monthly Reports">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+              <MonthRange
+                start={startMonth}
+                end={endMonth}
+                onStart={setStartMonth}
+                onEnd={setEndMonth}
+              />
+
+              <button
+                onClick={() => exportExcel(startMonth, endMonth)}
+                disabled={exporting || rangeInvalid || !visibleReports.length}
+                className={buttonClass}
+              >
+                <Download className="w-4 h-4" />
+                Export Filtered Excel
+              </button>
+            </div>
+
+            {rangeInvalid && (
+              <p className="mt-3 text-sm text-red-600">
+                Start month cannot be after end month.
+              </p>
+            )}
+          </Panel>
+
+          <DataTable
+            columns={monthlyColumns}
+            rows={rangeInvalid ? [] : visibleReports}
+            rowKey={(row) => row.monthYear}
+            emptyText={reportsState.loading ? 'Loading reports...' : 'No reports in this period.'}
+          />
+        </div>
+      )}
+
+      {/* ==================== TENANT ==================== */}
+
+      {activeTab === 'tenant' && (
+        <div className="space-y-6">
+          <Panel title="Tenant Payment History">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Field label="Tenant">
                 <select
                   value={selectedTenant}
-                  onChange={(e) => setSelectedTenant(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900"
+                  onChange={(event) => setSelectedTenant(event.target.value)}
+                  className={inputClass}
                 >
                   <option value="">Choose tenant...</option>
+
                   {tenants.map((tenant) => (
                     <option key={tenant._id} value={tenant._id}>
                       {tenant.name}
                     </option>
                   ))}
                 </select>
-              </div>
+              </Field>
 
-              <div>
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-2">
-                  Start Month
-                </label>
-                <input
-                  type="month"
-                  value={startMonth}
-                  onChange={(e) => setStartMonth(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-2">
-                  End Month
-                </label>
-                <input
-                  type="month"
-                  value={endMonth}
-                  onChange={(e) => setEndMonth(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900"
-                />
-              </div>
-
-              <button
-                onClick={handleTenantReport}
-                disabled={loading}
-                className="px-6 py-2.5 bg-blue-900 hover:bg-blue-800 disabled:bg-slate-300 text-white rounded-xl font-medium transition-all"
-              >
-                {loading ? 'Loading...' : 'Generate Report'}
-              </button>
+              <MonthRange
+                start={startMonth}
+                end={endMonth}
+                onStart={setStartMonth}
+                onEnd={setEndMonth}
+              />
             </div>
-          </div>
 
-          {/* Export Section */}
-          {tenantReport && (
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
-              <h3 className="text-lg font-bold text-slate-900 mb-4">📥 Export Tenant Report</h3>
-              <button
-                onClick={() => handleExportTenantExcel(selectedTenant)}
-                disabled={exportLoading}
-                className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-xl font-medium transition-all flex items-center gap-2"
-              >
-                <Download className="w-4 h-4" />
-                {exportLoading ? 'Exporting...' : 'Export as Excel'}
-              </button>
-            </div>
-          )}
+            <p className="text-xs text-slate-500 mt-3">
+              Leave the date range empty for all months.
+            </p>
+          </Panel>
+
+          {tenantState.loading && <Panel>Loading tenant report...</Panel>}
 
           {tenantReport && (
-            <div className="space-y-6">
-              {/* Tenant Info */}
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                <h3 className="text-lg font-bold text-slate-900 mb-4">Tenant Information</h3>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <div>
-                    <p className="text-xs font-bold uppercase text-slate-500">Name</p>
-                    <p className="text-slate-900 font-semibold mt-1">
-                      {tenantReport.tenantInfo.name}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold uppercase text-slate-500">CNIC</p>
-                    <p className="text-slate-900 font-semibold mt-1">
-                      {tenantReport.tenantInfo.cnic}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold uppercase text-slate-500">Phone</p>
-                    <p className="text-slate-900 font-semibold mt-1">
-                      {tenantReport.tenantInfo.phone}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold uppercase text-slate-500">WhatsApp</p>
-                    <p className="text-slate-900 font-semibold mt-1">
-                      {tenantReport.tenantInfo.whatsapp || 'N/A'}
-                    </p>
-                  </div>
+            <>
+              <Panel title="Tenant Information">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8">
+                  <Row label="Name" value={tenantReport.tenantInfo?.name || '—'} />
+                  <Row label="CNIC" value={tenantReport.tenantInfo?.cnic || '—'} />
+                  <Row label="Phone" value={tenantReport.tenantInfo?.phone || '—'} />
+                  <Row label="WhatsApp" value={tenantReport.tenantInfo?.whatsapp || '—'} />
                 </div>
+              </Panel>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <Metric title="Collected" value={money(tenantReport.financialSummary?.totalCollected)} />
+                <Metric title="Outstanding" value={money(tenantReport.financialSummary?.totalOutstanding)} tone="red" />
+                <Metric title="Avg Fully Paid Invoice" value={money(tenantReport.financialSummary?.averageMonthlyPayment)} tone="green" />
+                <Metric title="Payment Rate" value={percentage(tenantReport.financialSummary?.paymentRate)} tone="purple" />
               </div>
 
-              {/* Financial Summary */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
-                  <p className="text-xs font-bold uppercase text-blue-600">Total Collected</p>
-                  <p className="text-2xl font-bold text-blue-900 mt-2">
-                    PKR {tenantReport.financialSummary.totalCollected.toLocaleString()}
-                  </p>
+              <Panel title="Invoice Summary">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <Row label="Total" value={number(tenantReport.invoicesSummary?.total)} />
+                  <Row label="Paid" value={number(tenantReport.invoicesSummary?.paid)} />
+                  <Row label="Partial" value={number(tenantReport.invoicesSummary?.partial)} />
+                  <Row label="Unpaid" value={number(tenantReport.invoicesSummary?.unpaid)} />
                 </div>
-                <div className="bg-rose-50 rounded-xl p-4 border border-rose-200">
-                  <p className="text-xs font-bold uppercase text-rose-600">Outstanding</p>
-                  <p className="text-2xl font-bold text-rose-900 mt-2">
-                    PKR {tenantReport.financialSummary.totalOutstanding.toLocaleString()}
-                  </p>
-                </div>
-                <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-200">
-                  <p className="text-xs font-bold uppercase text-emerald-600">Avg Monthly</p>
-                  <p className="text-2xl font-bold text-emerald-900 mt-2">
-                    PKR {tenantReport.financialSummary.averageMonthlyPayment.toLocaleString()}
-                  </p>
-                </div>
-                <div className="bg-purple-50 rounded-xl p-4 border border-purple-200">
-                  <p className="text-xs font-bold uppercase text-purple-600">Payment Rate</p>
-                  <p className="text-2xl font-bold text-purple-900 mt-2">
-                    {tenantReport.financialSummary.paymentRate}%
-                  </p>
-                </div>
-              </div>
+              </Panel>
 
-              {/* Payment History Table */}
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="px-6 py-4 border-b border-slate-200">
-                  <h4 className="font-bold text-slate-900">Monthly Payment History</h4>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200">
-                        <th className="py-3 px-6 font-semibold text-slate-700">Month</th>
-                        <th className="py-3 px-6 font-semibold text-right text-slate-700">
-                          Invoice #
-                        </th>
-                        <th className="py-3 px-6 font-semibold text-right text-slate-700">Rent</th>
-                        <th className="py-3 px-6 font-semibold text-right text-slate-700">
-                          Utilities
-                        </th>
-                        <th className="py-3 px-6 font-semibold text-right text-slate-700">Total</th>
-                        <th className="py-3 px-6 font-semibold text-right text-slate-700">Paid</th>
-                        <th className="py-3 px-6 font-semibold text-right text-slate-700">Due</th>
-                        <th className="py-3 px-6 font-semibold text-center text-slate-700">Status</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {tenantReport.paymentHistory.map((payment, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50">
-                          <td className="py-3 px-6 font-medium text-slate-900">
-                            {payment.monthYear}
-                          </td>
-                          <td className="py-3 px-6 text-right text-slate-600 font-mono text-xs">
-                            {payment.invoiceNumber}
-                          </td>
-                          <td className="py-3 px-6 text-right font-medium text-slate-900">
-                            {payment.rentAmount.toLocaleString()}
-                          </td>
-                          <td className="py-3 px-6 text-right font-medium text-slate-900">
-                            {payment.utilities.toLocaleString()}
-                          </td>
-                          <td className="py-3 px-6 text-right font-bold text-slate-900">
-                            {payment.totalAmount.toLocaleString()}
-                          </td>
-                          <td className="py-3 px-6 text-right font-bold text-emerald-600">
-                            {payment.paidAmount.toLocaleString()}
-                          </td>
-                          <td className="py-3 px-6 text-right font-bold text-rose-600">
-                            {payment.balanceDue.toLocaleString()}
-                          </td>
-                          <td className="py-3 px-6 text-center">
-                            <span
-                              className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                                payment.status === 'Paid'
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : payment.status === 'Partial'
-                                  ? 'bg-amber-100 text-amber-800'
-                                  : 'bg-rose-100 text-rose-800'
-                              }`}
-                            >
-                              {payment.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
+              <DataTable
+                rows={tenantReport.paymentHistory || []}
+                rowKey={(row, index) => row.invoiceId || row.id || row.invoiceNumber || index}
+                columns={[
+                  { key: 'monthYear', label: 'Month' },
+                  { key: 'invoiceNumber', label: 'Invoice #' },
+                  { key: 'rent', label: 'Rent', render: (row) => money(row.rentAmount) },
+                  { key: 'utilities', label: 'Utilities', render: (row) => money(row.utilities) },
+                  { key: 'fine', label: 'Fine', render: (row) => money(row.lateFine) },
+                  { key: 'previous', label: 'Previous Balance', render: (row) => money(row.previousBalance) },
+                  { key: 'total', label: 'Total', render: (row) => money(row.totalAmount) },
+                  { key: 'paid', label: 'Paid', render: (row) => money(row.paidAmount) },
+                  { key: 'due', label: 'Due', render: (row) => money(row.balanceDue) },
+                  { key: 'status', label: 'Status', render: (row) => <Badge status={row.status} /> },
+                  { key: 'paymentDate', label: 'Last Payment', render: (row) => formatDate(row.paymentDate) },
+                ]}
+              />
+
+           <button
+  className={buttonClass}
+  disabled={exporting || tenantState.loading || rangeInvalid}
+  onClick={() =>
+    handleExport(() =>
+      exportTenantExcel(selectedTenant, startMonth, endMonth)
+    )
+  }
+>
+  <Download className="w-4 h-4" />
+  {exporting ? 'Exporting...' : 'Export Tenant Excel'}
+</button>
+            </>
           )}
         </div>
       )}
 
-      {/* TAB 4: SHOP-WISE REPORT */}
-      {activeTab === 'shop' && (
-        <div>
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">Shop Revenue Analysis</h3>
+      {/* ==================== SHOP ==================== */}
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-end">
-              <div>
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-2">
-                  Select Shop
-                </label>
+      {activeTab === 'shop' && (
+        <div className="space-y-6">
+          <Panel title="Shop Revenue Analysis">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Field label="Shop">
                 <select
                   value={selectedShop}
-                  onChange={(e) => setSelectedShop(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900"
+                  onChange={(event) => setSelectedShop(event.target.value)}
+                  className={inputClass}
                 >
                   <option value="">Choose shop...</option>
+
                   {shops.map((shop) => (
                     <option key={shop._id} value={shop._id}>
-                      Shop #{shop.shopNumber} - {shop.floor}
+                      Shop #{shop.shopNumber} — {shop.floor}
                     </option>
                   ))}
                 </select>
-              </div>
+              </Field>
 
-              <div>
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-2">
-                  Start Month
-                </label>
-                <input
-                  type="month"
-                  value={startMonth}
-                  onChange={(e) => setStartMonth(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900"
+              <MonthRange
+                start={startMonth}
+                end={endMonth}
+                onStart={setStartMonth}
+                onEnd={setEndMonth}
+              />
+            </div>
+          </Panel>
+
+          {shopState.loading && <Panel>Loading shop report...</Panel>}
+
+          {shopReport && (
+            <>
+              <Panel title="Shop Details">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8">
+                  <Row label="Shop number" value={shopReport.shopInfo?.shopNumber} />
+                  <Row label="Floor" value={shopReport.shopInfo?.floor} />
+                  <Row label="Type" value={shopReport.shopInfo?.type} />
+                  <Row label="Size" value={`${number(shopReport.shopInfo?.sizeSqFt)} Sq.Ft.`} />
+                  <Row label="Status" value={<Badge status={shopReport.shopInfo?.status} />} />
+                </div>
+              </Panel>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <Metric title="Collected" value={money(shopReport.financialSummary?.totalCollected)} />
+                <Metric title="Outstanding" value={money(shopReport.financialSummary?.totalOutstanding)} tone="red" />
+                <Metric title="Invoices" value={number(shopReport.financialSummary?.invoiceCount)} tone="purple" />
+                <Metric
+                  title="Paid / Partial / Unpaid"
+                  value={`${number(shopReport.financialSummary?.paidInvoices)} / ${number(shopReport.financialSummary?.partialInvoices)} / ${number(shopReport.financialSummary?.unpaidInvoices)}`}
+                  tone="green"
                 />
               </div>
 
-              <div>
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-2">
-                  End Month
-                </label>
-                <input
-                  type="month"
-                  value={endMonth}
-                  onChange={(e) => setEndMonth(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900"
+              <Panel title="Tenant History">
+                <DataTable
+                  rows={shopReport.agreementHistory || []}
+                  rowKey={(row, index) => row.id || index}
+                  columns={[
+                    { key: 'tenant', label: 'Tenant' },
+                    { key: 'startDate', label: 'Start', render: (row) => formatDate(row.startDate) },
+                    { key: 'endDate', label: 'End', render: (row) => formatDate(row.endDate) },
+                    { key: 'rent', label: 'Monthly Rent', render: (row) => money(row.monthlyRent) },
+                    { key: 'status', label: 'Status', render: (row) => <Badge status={row.status} /> },
+                  ]}
                 />
-              </div>
+              </Panel>
 
-              <button
-                onClick={handleShopReport}
-                disabled={loading}
-                className="px-6 py-2.5 bg-blue-900 hover:bg-blue-800 disabled:bg-slate-300 text-white rounded-xl font-medium transition-all"
-              >
-                {loading ? 'Loading...' : 'Generate Report'}
-              </button>
-            </div>
-          </div>
-
-          {/* Export Section */}
-          {shopReport && (
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
-              <h3 className="text-lg font-bold text-slate-900 mb-4">📥 Export Shop Report</h3>
-              <button
-                onClick={() => handleExportTenantExcel(selectedShop)}
-                disabled={exportLoading}
-                className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-xl font-medium transition-all flex items-center gap-2"
-              >
-                <Download className="w-4 h-4" />
-                {exportLoading ? 'Exporting...' : 'Export as Excel'}
-              </button>
-            </div>
-          )}
-
-          {shopReport && (
-            <div className="space-y-6">
-              {/* Shop Info */}
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-                <h3 className="text-lg font-bold text-slate-900 mb-4">Shop Details</h3>
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
-                  <div>
-                    <p className="text-xs font-bold uppercase text-slate-500">Shop Number</p>
-                    <p className="text-slate-900 font-semibold mt-1">
-                      #{shopReport.shopInfo.shopNumber}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold uppercase text-slate-500">Floor</p>
-                    <p className="text-slate-900 font-semibold mt-1">
-                      {shopReport.shopInfo.floor}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold uppercase text-slate-500">Type</p>
-                    <p className="text-slate-900 font-semibold mt-1">
-                      {shopReport.shopInfo.type}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold uppercase text-slate-500">Size</p>
-                    <p className="text-slate-900 font-semibold mt-1">
-                      {shopReport.shopInfo.sizeSqFt} Sq.Ft.
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-xs font-bold uppercase text-slate-500">Status</p>
-                    <span
-                      className={`px-3 py-1 rounded-full text-xs font-semibold inline-block mt-1 ${
-                        shopReport.shopInfo.status === 'Occupied'
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : 'bg-slate-100 text-slate-800'
-                      }`}
-                    >
-                      {shopReport.shopInfo.status}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Financial Metrics */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
-                  <p className="text-xs font-bold uppercase text-blue-600">Total Collected</p>
-                  <p className="text-2xl font-bold text-blue-900 mt-2">
-                    PKR {shopReport.financialSummary.totalCollected.toLocaleString()}
-                  </p>
-                </div>
-                <div className="bg-rose-50 rounded-xl p-4 border border-rose-200">
-                  <p className="text-xs font-bold uppercase text-rose-600">Outstanding</p>
-                  <p className="text-2xl font-bold text-rose-900 mt-2">
-                    PKR {shopReport.financialSummary.totalOutstanding.toLocaleString()}
-                  </p>
-                </div>
-                <div className="bg-purple-50 rounded-xl p-4 border border-purple-200">
-                  <p className="text-xs font-bold uppercase text-purple-600">Invoices</p>
-                  <p className="text-2xl font-bold text-purple-900 mt-2">
-                    {shopReport.financialSummary.invoiceCount}
-                  </p>
-                </div>
-                <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-200">
-                  <p className="text-xs font-bold uppercase text-emerald-600">Paid / Unpaid</p>
-                  <p className="text-lg font-bold text-emerald-900 mt-2">
-                    {shopReport.financialSummary.paidInvoices} /{' '}
-                    {shopReport.financialSummary.unpaidInvoices}
-                  </p>
-                </div>
-              </div>
-
-              {/* Agreement History */}
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="px-6 py-4 border-b border-slate-200">
-                  <h4 className="font-bold text-slate-900">Tenant History</h4>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200">
-                        <th className="py-3 px-6 font-semibold text-slate-700">Tenant</th>
-                        <th className="py-3 px-6 font-semibold text-slate-700">Start Date</th>
-                        <th className="py-3 px-6 font-semibold text-slate-700">End Date</th>
-                        <th className="py-3 px-6 font-semibold text-right text-slate-700">
-                          Monthly Rent
-                        </th>
-                        <th className="py-3 px-6 font-semibold text-center text-slate-700">
-                          Status
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {shopReport.agreementHistory.map((agreement, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50">
-                          <td className="py-3 px-6 font-medium text-slate-900">
-                            {agreement.tenant}
-                          </td>
-                          <td className="py-3 px-6 text-slate-600">
-                            {new Date(agreement.startDate).toLocaleDateString()}
-                          </td>
-                          <td className="py-3 px-6 text-slate-600">
-                            {new Date(agreement.endDate).toLocaleDateString()}
-                          </td>
-                          <td className="py-3 px-6 text-right font-bold text-slate-900">
-                            PKR {agreement.monthlyRent.toLocaleString()}
-                          </td>
-                          <td className="py-3 px-6 text-center">
-                            <span
-                              className={`px-3 py-1 rounded-full text-xs font-semibold ${
-                                agreement.status === 'Active'
-                                  ? 'bg-emerald-100 text-emerald-800'
-                                  : 'bg-slate-100 text-slate-800'
-                              }`}
-                            >
-                              {agreement.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
+             <button
+  className={buttonClass}
+  disabled={exporting || shopState.loading || rangeInvalid}
+  onClick={() =>
+    handleExport(() =>
+      exportShopExcel(selectedShop, startMonth, endMonth)
+    )
+  }
+>
+  <Download className="w-4 h-4" />
+  {exporting ? 'Exporting...' : 'Export Shop Excel'}
+</button>
+            </>
           )}
         </div>
       )}
 
-      {/* TAB 5: COMPARISON REPORT */}
+      {/* ==================== COMPARISON ==================== */}
+
       {activeTab === 'comparison' && (
-        <div>
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
-            <h3 className="text-lg font-bold text-slate-900 mb-4">Monthly Trend Analysis</h3>
-
+        <div className="space-y-6">
+          <Panel title="Monthly Trend Analysis">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
-              <div>
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-2">
-                  Start Month
-                </label>
-                <input
-                  type="month"
-                  value={startMonth}
-                  onChange={(e) => setStartMonth(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold uppercase text-slate-600 mb-2">
-                  End Month
-                </label>
-                <input
-                  type="month"
-                  value={endMonth}
-                  onChange={(e) => setEndMonth(e.target.value)}
-                  className="w-full px-4 py-2.5 rounded-xl border border-slate-300 focus:ring-2 focus:ring-blue-900"
-                />
-              </div>
+              <MonthRange
+                start={startMonth}
+                end={endMonth}
+                onStart={setStartMonth}
+                onEnd={setEndMonth}
+              />
 
               <button
-                onClick={handleComparisonReport}
-                disabled={loading}
-                className="px-6 py-2.5 bg-blue-900 hover:bg-blue-800 disabled:bg-slate-300 text-white rounded-xl font-medium transition-all"
-              >
-                {loading ? 'Loading...' : 'Generate Analysis'}
-              </button>
-            </div>
-          </div>
-
-          {/* Export Section */}
-          {comparisonReport && (
-            <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 mb-6">
-              <h3 className="text-lg font-bold text-slate-900 mb-4">📥 Export Comparison Report</h3>
-              <button
-                onClick={handleExportAllReportsExcel}
-                disabled={exportLoading || reports.length === 0}
-                className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white rounded-xl font-medium transition-all flex items-center gap-2"
+                className={buttonClass}
+                onClick={() => exportExcel(startMonth, endMonth)}
+                disabled={
+                  exporting ||
+                  comparisonState.loading ||
+                  rangeInvalid ||
+                  !comparisonReport?.monthlyTrend?.length
+                }
               >
                 <Download className="w-4 h-4" />
-                {exportLoading ? 'Exporting...' : 'Export as Excel'}
+                Export Period Excel
               </button>
             </div>
-          )}
+
+            {(!startMonth || !endMonth) && (
+              <p className="text-sm text-slate-500 mt-3">
+                Select both months to load the comparison.
+              </p>
+            )}
+          </Panel>
+
+          {comparisonState.loading && <Panel>Loading comparison...</Panel>}
 
           {comparisonReport && (
-            <div className="space-y-6">
-              {/* Period Summary */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
-                  <p className="text-xs font-bold uppercase text-blue-600">Period</p>
-                  <p className="text-lg font-bold text-blue-900 mt-2">
-                    {comparisonReport.periodSummary.startMonth} to{' '}
-                    {comparisonReport.periodSummary.endMonth}
-                  </p>
-                  <p className="text-xs text-blue-700 mt-1">
-                    {comparisonReport.periodSummary.monthsCount} months
-                  </p>
-                </div>
-                <div className="bg-blue-50 rounded-xl p-4 border border-blue-200">
-                  <p className="text-xs font-bold uppercase text-blue-600">Total Revenue</p>
-                  <p className="text-2xl font-bold text-blue-900 mt-2">
-                    PKR {(comparisonReport.periodSummary.totalRevenue / 1000).toFixed(1)}K
-                  </p>
-                </div>
-                <div className="bg-orange-50 rounded-xl p-4 border border-orange-200">
-                  <p className="text-xs font-bold uppercase text-orange-600">Total Expenses</p>
-                  <p className="text-2xl font-bold text-orange-900 mt-2">
-                    PKR {(comparisonReport.periodSummary.totalExpenses / 1000).toFixed(1)}K
-                  </p>
-                </div>
-                <div className="bg-emerald-50 rounded-xl p-4 border border-emerald-200">
-                  <p className="text-xs font-bold uppercase text-emerald-600">Total Profit</p>
-                  <p className="text-2xl font-bold text-emerald-900 mt-2">
-                    PKR {(comparisonReport.periodSummary.totalProfit / 1000).toFixed(1)}K
-                  </p>
-                  <p className="text-xs text-emerald-700 mt-1">
-                    Avg Collection: {comparisonReport.periodSummary.averageCollectionRate}%
-                  </p>
-                </div>
+            <>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                <Metric
+                  title="Period"
+                  value={`${comparisonReport.periodSummary?.startMonth} → ${comparisonReport.periodSummary?.endMonth}`}
+                  note={`${number(comparisonReport.periodSummary?.monthsCount)} months`}
+                />
+                <Metric
+                  title="Revenue"
+                  value={money(comparisonReport.periodSummary?.totalRevenue)}
+                />
+                <Metric
+                  title="Expenses"
+                  value={money(comparisonReport.periodSummary?.totalExpenses)}
+                  tone="orange"
+                />
+                <Metric
+                  title="Net Profit / Loss"
+                  value={money(comparisonReport.periodSummary?.totalProfit)}
+                  tone={number(comparisonReport.periodSummary?.totalProfit) < 0 ? 'red' : 'green'}
+                  note={`Avg collection: ${percentage(comparisonReport.periodSummary?.averageCollectionRate)}`}
+                />
               </div>
 
-              {/* Monthly Trend Table */}
-              <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-                <div className="px-6 py-4 border-b border-slate-200">
-                  <h4 className="font-bold text-slate-900">Monthly Performance Trend</h4>
-                </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead>
-                      <tr className="bg-slate-50 border-b border-slate-200">
-                        <th className="py-3 px-6 font-semibold text-slate-700">Month</th>
-                        <th className="py-3 px-6 font-semibold text-right text-slate-700">
-                          Revenue
-                        </th>
-                        <th className="py-3 px-6 font-semibold text-right text-slate-700">
-                          Expenses
-                        </th>
-                        <th className="py-3 px-6 font-semibold text-right text-slate-700">
-                          Profit/Loss
-                        </th>
-                        <th className="py-3 px-6 font-semibold text-center text-slate-700">
-                          Collection %
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {comparisonReport.monthlyTrend.map((month, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50">
-                          <td className="py-3 px-6 font-medium text-slate-900">
-                            {month.monthYear}
-                          </td>
-                          <td className="py-3 px-6 text-right font-semibold text-blue-600">
-                            PKR {month.revenue.toLocaleString()}
-                          </td>
-                          <td className="py-3 px-6 text-right font-semibold text-orange-600">
-                            PKR {month.expenses.toLocaleString()}
-                          </td>
-                          <td className="py-3 px-6 text-right">
-                            <span
-                              className={`font-bold ${
-                                month.profit > 0
-                                  ? 'text-emerald-600'
-                                  : month.profit < 0
-                                  ? 'text-rose-600'
-                                  : 'text-slate-600'
-                              }`}
-                            >
-                              PKR {month.profit.toLocaleString()}
-                            </span>
-                          </td>
-                          <td className="py-3 px-6 text-center font-semibold text-slate-900">
-                            {month.collectionRate}%
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </div>
+              <DataTable
+                rows={comparisonReport.monthlyTrend || []}
+                rowKey={(row) => row.monthYear}
+                columns={[
+                  { key: 'monthYear', label: 'Month' },
+                  { key: 'revenue', label: 'Revenue', render: (row) => money(row.revenue) },
+                  { key: 'expenses', label: 'Expenses', render: (row) => money(row.expenses) },
+                  {
+                    key: 'profit',
+                    label: 'Net Profit / Loss',
+                    render: (row) => (
+                      <span className={number(row.profit) < 0 ? 'text-rose-600 font-bold' : 'text-emerald-700 font-bold'}>
+                        {money(row.profit)}
+                      </span>
+                    ),
+                  },
+                  { key: 'collectionRate', label: 'Collection', render: (row) => percentage(row.collectionRate) },
+                ]}
+              />
+            </>
           )}
         </div>
       )}
 
-      {/* Report Details Modal */}
-      {selectedReport && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex justify-center items-center z-50 p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-100 max-h-[90vh] overflow-y-auto">
-            <div className="bg-slate-900 text-white px-6 py-4 flex justify-between items-center sticky top-0">
-              <h3 className="text-lg font-bold">Report: {selectedReport.monthYear}</h3>
+      {/* ==================== DETAILS MODAL ==================== */}
+
+      {detailsMonth && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="report-modal-title"
+          className="fixed inset-0 z-50 bg-slate-900/60 flex items-center justify-center p-4"
+        >
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div className="sticky top-0 bg-slate-900 text-white px-6 py-4 flex items-center justify-between gap-4">
+              <h3 id="report-modal-title" className="font-bold">
+                Report: {detailsMonth}
+              </h3>
+
               <button
-                onClick={() => setSelectedReport(null)}
-                className="text-slate-400 hover:text-white transition-colors"
+                onClick={() => setDetailsMonth('')}
+                aria-label="Close report"
               >
                 <X className="w-6 h-6" />
               </button>
             </div>
 
-            <div className="p-6 space-y-6">
-              {/* Revenue */}
-              <div>
-                <h4 className="font-bold text-slate-900 text-sm uppercase text-slate-500 mb-3">
-                  Revenue Breakdown
-                </h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="p-3 bg-blue-50 rounded-lg border border-blue-200">
-                    <p className="text-xs text-blue-600 font-semibold">Rent Collected</p>
-                    <p className="text-xl font-bold text-blue-900 mt-1">
-                      PKR {selectedReport.totalRentCollected.toLocaleString()}
-                    </p>
-                  </div>
-                  <div className="p-3 bg-emerald-50 rounded-lg border border-emerald-200">
-                    <p className="text-xs text-emerald-600 font-semibold">Utilities</p>
-                    <p className="text-xl font-bold text-emerald-900 mt-1">
-                      PKR {selectedReport.totalUtilitiesCollected.toLocaleString()}
-                    </p>
-                  </div>
-                  <div className="p-3 bg-rose-50 rounded-lg border border-rose-200">
-                    <p className="text-xs text-rose-600 font-semibold">Late Fines</p>
-                    <p className="text-xl font-bold text-rose-900 mt-1">
-                      PKR {selectedReport.totalLateFines.toLocaleString()}
-                    </p>
-                  </div>
-                  <div className="p-3 bg-purple-50 rounded-lg border border-purple-200">
-                    <p className="text-xs text-purple-600 font-semibold">Total Revenue</p>
-                    <p className="text-xl font-bold text-purple-900 mt-1">
-                      PKR {selectedReport.totalRevenue.toLocaleString()}
-                    </p>
-                  </div>
-                </div>
-              </div>
+            <div className="p-6 space-y-5">
+              {detailsState.loading && <p>Loading latest report...</p>}
 
-              {/* Expenses */}
-              <div>
-                <h4 className="font-bold text-slate-900 text-sm uppercase text-slate-500 mb-3">
-                  Expenses by Category
-                </h4>
-                <div className="space-y-2">
-                  {Object.entries(selectedReport.expensesByCategory).map(([category, amount]) => (
-                    <div key={category} className="flex justify-between items-center p-2 bg-slate-50 rounded-lg">
-                      <span className="text-slate-700 text-sm font-medium">{category}</span>
-                      <span className="font-semibold text-slate-900">
-                        PKR {amount.toLocaleString()}
-                      </span>
-                    </div>
-                  ))}
-                  <div className="border-t border-slate-200 pt-2 mt-2 flex justify-between items-center p-2 bg-orange-50 rounded-lg">
-                    <span className="text-orange-700 font-bold">Total Expenses</span>
-                    <span className="font-bold text-orange-900">
-                      PKR {selectedReport.totalExpenses.toLocaleString()}
-                    </span>
-                  </div>
-                </div>
-              </div>
+              {detailsState.error && (
+                <p className="text-red-600">{detailsState.error}</p>
+              )}
 
-              {/* Invoices */}
-              <div>
-                <h4 className="font-bold text-slate-900 text-sm uppercase text-slate-500 mb-3">
-                  Invoice Status
-                </h4>
-                <div className="grid grid-cols-4 gap-2">
-                  <div className="p-3 bg-slate-50 rounded-lg text-center border border-slate-200">
-                    <p className="text-xs text-slate-600">Total</p>
-                    <p className="text-lg font-bold text-slate-900">
-                      {selectedReport.totalInvoicesGenerated}
-                    </p>
-                  </div>
-                  <div className="p-3 bg-emerald-50 rounded-lg text-center border border-emerald-200">
-                    <p className="text-xs text-emerald-600">Paid</p>
-                    <p className="text-lg font-bold text-emerald-900">
-                      {selectedReport.invoicesPaid}
-                    </p>
-                  </div>
-                  <div className="p-3 bg-rose-50 rounded-lg text-center border border-rose-200">
-                    <p className="text-xs text-rose-600">Unpaid</p>
-                    <p className="text-lg font-bold text-rose-900">
-                      {selectedReport.invoicesUnpaid}
-                    </p>
-                  </div>
-                  <div className="p-3 bg-amber-50 rounded-lg text-center border border-amber-200">
-                    <p className="text-xs text-amber-600">Partial</p>
-                    <p className="text-lg font-bold text-amber-900">
-                      {selectedReport.invoicesPartial}
-                    </p>
-                  </div>
-                </div>
-              </div>
+              {detailsState.data && (
+                <>
+                  <ReportDetails report={detailsState.data} />
 
-              {/* Profit & Loss */}
-              <div className="border-t-2 border-slate-200 pt-4">
-                <div className="grid grid-cols-3 gap-3">
-                  <div
-                    className={`p-4 rounded-lg text-center border-2 ${
-                      selectedReport.netProfit > 0
-                        ? 'bg-emerald-50 border-emerald-300'
-                        : 'bg-rose-50 border-rose-300'
-                    }`}
+                  <button
+                    className={buttonClass}
+                    disabled={exporting}
+                    onClick={() => exportPDF(detailsMonth)}
                   >
-                    <p className={`text-xs font-bold ${selectedReport.netProfit > 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
-                      {selectedReport.netProfit > 0 ? 'NET PROFIT' : 'NET LOSS'}
-                    </p>
-                    <p
-                      className={`text-2xl font-bold mt-2 ${
-                        selectedReport.netProfit > 0
-                          ? 'text-emerald-900'
-                          : 'text-rose-900'
-                      }`}
-                    >
-                      PKR {Math.abs(selectedReport.netProfit || selectedReport.netLoss || 0).toLocaleString()}
-                    </p>
-                  </div>
-
-                  <div className="p-4 bg-purple-50 rounded-lg text-center border-2 border-purple-300">
-                    <p className="text-xs font-bold text-purple-600">Profit Margin</p>
-                    <p className="text-2xl font-bold text-purple-900 mt-2">
-                      {selectedReport.profitMargin}%
-                    </p>
-                  </div>
-
-                  <div className="p-4 bg-blue-50 rounded-lg text-center border-2 border-blue-300">
-                    <p className="text-xs font-bold text-blue-600">Collection Rate</p>
-                    <p className="text-2xl font-bold text-blue-900 mt-2">
-                      {selectedReport.collectionRate}%
-                    </p>
-                  </div>
-                </div>
-              </div>
+                    <Download className="w-4 h-4" />
+                    Download PDF
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
