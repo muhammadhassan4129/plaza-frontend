@@ -1,4 +1,4 @@
-const CACHE_NAME = 'khalil-management-system-v1';
+const CACHE_NAME = 'khalil-management-system-v2';
 const urlsToCache = ['/', '/index.html'];
 
 // Install event
