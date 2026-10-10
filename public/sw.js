@@ -1,4 +1,4 @@
-const CACHE_NAME = 'plaza-manager-v1';
+const CACHE_NAME = 'khalil-management-system-v1';
 const urlsToCache = ['/', '/index.html'];
 
 // Install event
