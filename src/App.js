@@ -9,32 +9,131 @@ import AgreementsPage from './pages/AgreementsPage';
 import InvoicesPage from './pages/InvoicesPage';
 import ExpensesPage from './pages/ExpensesPage';
 import ReportsPage from './pages/ReportsPage';
+import SettingsPage from './pages/SettingsPage';
 import { getCurrentAdmin } from './services/authService';
 
-// Protected Route Wrapper Component
-const ProtectedRoute = ({ children }) => {
-  const admin = getCurrentAdmin();
-  if (!admin) {
+const ProtectedRoute = ({ children, pageKey }) => {
+  const user = getCurrentAdmin();
+
+  if (!user) {
     return <Navigate to="/login" replace />;
   }
+
+  const isSuperAdmin = user.role === 'admin';
+  const allowedPages = user.allowedPages || [];
+
+  if (pageKey === 'settings' && !isSuperAdmin) {
+    return <Navigate to="/" replace />;
+  }
+
+  // 3. Page Access Check for Manager
+  if (!isSuperAdmin && pageKey && !allowedPages.includes(pageKey)) {
+
+    const firstAllowedPage = allowedPages[0];
+    if (firstAllowedPage) {
+      const redirectPath = firstAllowedPage === 'dashboard' ? '/' : `/${firstAllowedPage}`;
+      return <Navigate to={redirectPath} replace />;
+    }
+    
+    return <Navigate to="/login" replace />;
+  }
+
   return <Layout>{children}</Layout>;
+};
+
+const RootRedirect = () => {
+  const user = getCurrentAdmin();
+
+  if (!user) {
+    return <Navigate to="/login" replace />;
+  }
+
+  const isSuperAdmin = user.role === 'admin';
+  const allowedPages = user.allowedPages || [];
+
+  if (isSuperAdmin || allowedPages.includes('dashboard')) {
+    return (
+      <ProtectedRoute pageKey="dashboard">
+        <DashboardPage />
+      </ProtectedRoute>
+    );
+  }
+
+  if (allowedPages.length > 0) {
+    const firstPage = allowedPages[0];
+    return <Navigate to={`/${firstPage}`} replace />;
+  }
+
+  return <Navigate to="/login" replace />;
 };
 
 function App() {
   return (
     <Router>
       <Routes>
-        {/* Public Login Route (Layout ke baghair) */}
+        {/* Public Route */}
         <Route path="/login" element={<LoginPage />} />
 
-        {/* Protected Routes (Layout ke sath) */}
-        <Route path="/" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
-        <Route path="/shops" element={<ProtectedRoute><ShopsPage /></ProtectedRoute>} />
-        <Route path="/tenants" element={<ProtectedRoute><TenantsPage /></ProtectedRoute>} />
-        <Route path="/agreements" element={<ProtectedRoute><AgreementsPage /></ProtectedRoute>} />
-        <Route path="/invoices" element={<ProtectedRoute><InvoicesPage /></ProtectedRoute>} />
-        <Route path="/expenses" element={<ProtectedRoute><ExpensesPage /></ProtectedRoute>} />
-        <Route path="/reports" element={<ProtectedRoute><ReportsPage /></ProtectedRoute>} />
+        {/* Root Route with Smart Redirect */}
+        <Route path="/" element={<RootRedirect />} />
+
+        {/* Protected Permission-Based Routes */}
+        <Route
+          path="/shops"
+          element={
+            <ProtectedRoute pageKey="shops">
+              <ShopsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/tenants"
+          element={
+            <ProtectedRoute pageKey="tenants">
+              <TenantsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/agreements"
+          element={
+            <ProtectedRoute pageKey="agreements">
+              <AgreementsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/invoices"
+          element={
+            <ProtectedRoute pageKey="invoices">
+              <InvoicesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/expenses"
+          element={
+            <ProtectedRoute pageKey="expenses">
+              <ExpensesPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/reports"
+          element={
+            <ProtectedRoute pageKey="reports">
+              <ReportsPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute pageKey="settings">
+              <SettingsPage />
+            </ProtectedRoute>
+          }
+        />
 
         {/* Fallback route */}
         <Route path="*" element={<Navigate to="/" replace />} />
