@@ -13,6 +13,7 @@ import {
   fetchAgreementFormData,
   createAgreement,
   updateAgreement,
+  deleteAgreement,
 } from '../services/agreementService';
 
 import {
@@ -30,6 +31,7 @@ import {
   FileCheck2,
   Pencil,
   Save,
+  Trash2,
 } from 'lucide-react';
 
 // ==================== HELPERS ====================
@@ -551,6 +553,7 @@ const AgreementsPage = () => {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingAgreement, setEditingAgreement] = useState(null);
   const [selectedAgreement, setSelectedAgreement] = useState(null);
+  const [deleteTarget, setDeleteTarget] = useState(null);
   const [formData, setFormData] = useState(initialForm);
 
   const [error, setError] = useState('');
@@ -1149,39 +1152,120 @@ const AgreementsPage = () => {
 
   // ==================== ACTION BUTTONS ====================
 
-  const renderActions = (agreement) => (
-    <div className="flex flex-wrap gap-2">
+// Open the confirmation modal.
+const handleDelete = (agreement) => {
+  if (saveLock.current) return;
+
+  if (agreement.canDelete !== true) {
+    setError(
+      'This agreement cannot be deleted. Refresh to check its invoice status.'
+    );
+    return;
+  }
+
+  setDeleteTarget(agreement);
+};
+
+const closeDeleteModal = () => {
+  if (saveLock.current) return;
+  setDeleteTarget(null);
+};
+
+// Run only after the user confirms.
+const confirmDelete = async () => {
+  if (saveLock.current || !deleteTarget) return;
+
+  const agreement = deleteTarget;
+
+  saveLock.current = true;
+  ++requestId.current;
+
+  setSaving(true);
+  setLoading(false);
+  setError('');
+  setSuccessMsg('');
+
+  try {
+    const response = await deleteAgreement(agreement._id);
+
+    if (!mounted.current) return;
+
+    setDeleteTarget(null);
+
+    setSelectedAgreement((previous) =>
+      previous?._id === agreement._id ? null : previous
+    );
+
+    await loadData();
+
+    if (mounted.current) {
+      setSuccessMsg(
+        response.message || 'Agreement deleted successfully.'
+      );
+    }
+  } catch (requestError) {
+    if (!mounted.current) return;
+
+    setDeleteTarget(null);
+    await loadData();
+
+    if (mounted.current) {
+      setError(
+        getErrorMessage(
+          requestError,
+          'Could not delete agreement'
+        )
+      );
+    }
+  } finally {
+    saveLock.current = false;
+
+    if (mounted.current) {
+      setSaving(false);
+    }
+  }
+};
+
+ const renderActions = (agreement) => (
+  <div className="flex flex-wrap items-center gap-2">
+    <button
+      type="button"
+      disabled={saving}
+      onClick={() => openPreview(agreement)}
+      className={`${buttonClass} bg-indigo-50 px-3 text-indigo-700 hover:bg-indigo-100`}
+    >
+      <Printer className="h-4 w-4" />
+      View / Print
+    </button>
+
+    <button
+      type="button"
+      disabled={saving || agreement.status !== 'Active'}
+      onClick={() => openEdit(agreement)}
+      title={
+        agreement.status !== 'Active'
+          ? 'Only active agreements can be edited'
+          : 'Edit agreement'
+      }
+      className={`${secondaryButton} px-3`}
+    >
+      <Pencil className="h-4 w-4" />
+      Edit
+    </button>
+
+    {agreement.canDelete === true && (
       <button
         type="button"
         disabled={saving}
-        onClick={() => openPreview(agreement)}
-        className={`${buttonClass} flex-1 bg-indigo-50 px-3 text-indigo-700 hover:bg-indigo-100 lg:flex-none`}
+        onClick={() => handleDelete(agreement)}
+        className={`${buttonClass} border border-rose-200 bg-rose-50 px-3 text-rose-700 hover:bg-rose-100`}
       >
-        <Printer className="h-4 w-4" />
-        View / Print
+        <Trash2 className="h-4 w-4" />
+        Delete
       </button>
-
-      <button
-        type="button"
-        disabled={
-          saving || agreement.status !== 'Active'
-        }
-        onClick={() => openEdit(agreement)}
-        title={
-          agreement.status === 'Active'
-            ? 'Edit agreement'
-            : 'Only active agreements can be edited'
-        }
-        aria-label={`Edit agreement for ${
-          agreement.tenant?.name || shopLabel(agreement)
-        }`}
-        className={`${secondaryButton} flex-1 px-3 lg:flex-none`}
-      >
-        <Pencil className="h-4 w-4" />
-        Edit
-      </button>
-    </div>
-  );
+    )}
+  </div>
+);
 
   const handlePrint = () => {
     setPrintError('');
@@ -1893,6 +1977,113 @@ const AgreementsPage = () => {
           </form>
         </Modal>
       )}
+
+      {/* ==================== DELETE CONFIRMATION ==================== */}
+
+{deleteTarget && (
+  <Modal
+    title="Delete agreement?"
+    description="Please review the agreement before confirming."
+    icon={Trash2}
+    busy={saving}
+    onClose={closeDeleteModal}
+  >
+    <div className="min-h-0 space-y-5 overflow-y-auto p-5 sm:p-6">
+      <div className="flex items-start gap-4 rounded-2xl border border-rose-100 bg-rose-50 p-4">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-rose-100 text-rose-600">
+          <Trash2 className="h-5 w-5" />
+        </span>
+
+        <div>
+          <h3 className="text-sm font-bold text-rose-900">
+            This action cannot be undone
+          </h3>
+
+          <p className="mt-1 text-sm leading-6 text-rose-700">
+            This agreement will be permanently deleted.
+            Deletion is allowed only if it has no invoices.
+          </p>
+        </div>
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-slate-200">
+        <div className="flex items-center gap-3 border-b border-slate-100 bg-slate-50 p-4">
+          <Avatar name={deleteTarget.tenant?.name} />
+
+          <div className="min-w-0">
+            <p className="break-words text-sm font-bold text-slate-900">
+              {deleteTarget.tenant?.name || 'Unavailable'}
+            </p>
+
+            <p className="mt-1 text-xs text-slate-500">
+              {deleteTarget.tenant?.cnic || '—'}
+            </p>
+          </div>
+        </div>
+
+        <dl className="space-y-3 p-4 text-sm">
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Shops</dt>
+            <dd className="text-right font-semibold text-slate-900">
+              {shopLabel(deleteTarget)}
+            </dd>
+          </div>
+
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Monthly rent</dt>
+            <dd className="text-right font-semibold text-slate-900">
+              {money(
+                deleteTarget.monthlyRent ??
+                deleteTarget.rentAmount
+              )}
+            </dd>
+          </div>
+
+          <div className="flex justify-between gap-4">
+            <dt className="text-slate-500">Lease period</dt>
+            <dd className="text-right text-slate-700">
+              {displayDate(deleteTarget.startDate)}
+              {' → '}
+              {displayDate(deleteTarget.endDate)}
+            </dd>
+          </div>
+        </dl>
+      </div>
+
+      <p className="text-sm leading-6 text-slate-500">
+        Eligible shops will become available again.
+        The tenant record will remain saved.
+      </p>
+    </div>
+
+    <ModalFooter>
+      <button
+        type="button"
+        autoFocus
+        disabled={saving}
+        onClick={closeDeleteModal}
+        className={`${secondaryButton} flex-1 sm:flex-none`}
+      >
+        Keep agreement
+      </button>
+
+      <button
+        type="button"
+        disabled={saving}
+        onClick={confirmDelete}
+        className={`${buttonClass} flex-1 bg-rose-600 text-white hover:bg-rose-700 focus-visible:ring-rose-500 sm:flex-none`}
+      >
+        {saving ? (
+          <RefreshCw className="h-4 w-4 animate-spin" />
+        ) : (
+          <Trash2 className="h-4 w-4" />
+        )}
+
+        {saving ? 'Deleting…' : 'Yes, delete agreement'}
+      </button>
+    </ModalFooter>
+  </Modal>
+)}
 
       {/* ==================== PRINT PREVIEW ==================== */}
 
