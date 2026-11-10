@@ -1,6 +1,4 @@
 import axios from 'axios';
-
-// Agar aapka environment variable define nahi hai toh fallback URL use kar lein
 const API_URL = `${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/auth`;
 
 export const loginAdmin = async (email, password) => {
